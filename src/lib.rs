@@ -3,11 +3,14 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    str,
 };
 
 use ahash::AHashSet;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use simdutf8::basic::from_utf8;
+
+mod chars;
 
 // 1. load file
 // 2. split into lines
@@ -57,16 +60,22 @@ impl PP {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Exp<'a> {
+    Name(&'a str),
+    And,
+    Or,
+    Not,
+}
+
 #[derive(Debug)]
 enum Event<'a> {
     Code,
     Include(&'a str),
-    If(&'a str),
-    ElseIf(&'a str),
+    If(Vec<Exp<'a>>),
+    ElseIf(Vec<Exp<'a>>),
     Else,
     EndIf,
-    Define(&'a str),
-    Undef(&'a str),
 }
 
 fn parse(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
@@ -85,26 +94,18 @@ fn parse(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
                         return include(j, bytes);
                     }
                     "#if" => {
-                        let (r, next) = expression(j, bytes);
-                        return (r.map(Event::If), next);
+                        let (r, next) = exp(j, bytes);
+                        return (Ok(Event::If(r)), next);
                     }
                     "#elif" => {
-                        let (r, next) = expression(j, bytes);
-                        return (r.map(Event::ElseIf), next);
+                        let (r, next) = exp(j, bytes);
+                        return (Ok(Event::ElseIf(r)), next);
                     }
                     "#else" => {
                         return (Ok(Event::Else), next_line(j, bytes));
                     }
                     "#endif" => {
                         return (Ok(Event::EndIf), next_line(j, bytes));
-                    }
-                    "#define" => {
-                        let (r, next) = name(j, bytes);
-                        return (r.map(Event::Define), next);
-                    }
-                    "#undef" => {
-                        let (r, next) = name(j, bytes);
-                        return (r.map(Event::Undef), next);
                     }
                     _ => {
                         // ignores unknow directive
@@ -147,20 +148,33 @@ fn ignore_spaces(offset: usize, bytes: &[u8]) -> usize {
     return bytes.len();
 }
 
-fn next_line(offset: usize, bytes: &[u8]) -> usize {
-    for i in offset..bytes.len() {
-        match bytes[i] {
+fn next_line(mut offset: usize, bytes: &[u8]) -> usize {
+    loop {
+        if offset >= bytes.len() {
+            break;
+        }
+
+        let byte = bytes[offset];
+        let len = utf8_byte_count(byte);
+        offset += len;
+
+        // ascii only
+        if len != 1 {
+            continue;
+        }
+
+        match byte {
             b'\n' | b'\r' => {
-                return i + 1;
+                return offset;
             }
             _ => {}
         }
     }
+
     // bytes eneded
-    return bytes.len();
+    return offset;
 }
 
-#[inline]
 fn include(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
     let offset = ignore_spaces(offset, bytes);
     match bytes.get(offset) {
@@ -218,50 +232,154 @@ fn delimited_name(offset: usize, bytes: &[u8], delimiter: u8) -> (Result<Event>,
     return (Err(d), bytes.len());
 }
 
-#[inline]
-fn name(offset: usize, bytes: &[u8]) -> (Result<&str>, usize) {
-    let offset = ignore_spaces(offset, bytes);
+fn exp<'a>(mut offset: usize, bytes: &'a [u8]) -> (Vec<Exp<'a>>, usize) {
+    let mut exp = vec![];
+    exp_inner(&mut offset, bytes, &mut exp);
+    (exp, offset)
+}
 
-    for j in offset..bytes.len() {
-        let b = bytes[j];
-        match b {
-            b'\t' | b' ' | b'/' | b'*' | b'\n' | b'\r' => {
-                let name = from_utf8(&bytes[offset..j]).expect("not utf8");
-                return (Ok(name), next_line(j, bytes));
+fn exp_inner<'a>(offset: &mut usize, bytes: &'a [u8], exp: &mut Vec<Exp<'a>>) {
+    let mut op = 0;
+    loop {
+        if *offset >= bytes.len() {
+            break;
+        }
+
+        let byte = bytes[*offset];
+        let len = utf8_byte_count(byte);
+
+        // ascii only
+        if len != 1 {
+            *offset = *offset + len;
+            continue;
+        }
+
+        match byte {
+            b'(' => {
+                *offset = *offset + 1;
+                exp_name(offset, bytes, exp);
             }
-            _ => {}
+            b'|' => {
+                *offset = *offset + 1;
+                if op == 1 {
+                    exp_inner(offset, bytes, exp);
+                    exp.push(Exp::Or);
+                    op = 0;
+                } else {
+                    op = 1;
+                }
+            }
+            b'&' => {
+                *offset = *offset + 1;
+                if op == 2 {
+                    exp_inner(offset, bytes, exp);
+                    exp.push(Exp::And);
+                    op = 0;
+                } else {
+                    op = 2;
+                }
+            }
+            b'!' => {
+                *offset = *offset + 1;
+                exp_inner(offset, bytes, exp);
+                exp.push(Exp::Not);
+                op = 0;
+            }
+            b'/' => {
+                *offset = next_line(*offset, bytes);
+                return;
+            }
+            b')' | b'\n' | b'\r' => {
+                *offset = *offset + 1;
+                return;
+            }
+            _ => {
+                exp_name(offset, bytes, exp);
+            }
         }
     }
-
-    let name = from_utf8(&bytes[offset..bytes.len()]).expect("not utf8");
-    return (Ok(name), bytes.len());
 }
 
-pub enum Op {
-    Define(String),
-    And,
-    Or,
-    Not,
-}
+fn exp_name<'a>(offset: &mut usize, bytes: &'a [u8], exp: &mut Vec<Exp<'a>>) {
+    *offset = ignore_spaces(*offset, bytes);
 
-#[inline]
-fn expression(offset: usize, bytes: &[u8]) -> (Result<&str>, usize) {
-    (Ok("?"), next_line(offset, bytes))
-    // for i in offset..bytes.len() {
-    //     match bytes[i] {
-    //         b'\n' | b'\r' => {
-    //             return i + 1;
-    //         }
-    //         _ => {}
-    //     }
-    // }
-    // // bytes eneded
-    // return bytes.len();
+    let n = *offset;
+    let slice;
+    loop {
+        if *offset == bytes.len() {
+            // take the remainder
+            slice = &bytes[n..(*offset)];
+            break;
+        }
+        assert!(*offset < bytes.len(), "worng encoding");
+
+        let byte = bytes[*offset];
+        let len = utf8_byte_count(byte);
+
+        // ascii only
+        if len != 1 {
+            *offset = *offset + len;
+            continue;
+        }
+
+        if (b'a' <= byte && byte <= b'z')
+            || (b'A' <= byte && byte <= b'Z')
+            || (b'0' <= byte && byte <= b'9')
+            || byte == b'_'
+        {
+            *offset = *offset + len;
+            continue;
+        }
+
+        // take the current
+        slice = &bytes[n..(*offset)];
+
+        if byte == b' ' || byte == b'\t' || byte == b'\n' || byte == b'\r' {
+            *offset = *offset + 1;
+        }
+
+        break;
+    }
+
+    if slice.len() > 0 {
+        unsafe {
+            exp.push(Exp::Name(str::from_utf8_unchecked(slice)));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expressions() {
+        assert_eq!(&(exp(0, b"a").0), &[Exp::Name("a")]);
+        assert_eq!(&(exp(0, b"!a").0), &[Exp::Name("a"), Exp::Not]);
+        assert_eq!(
+            &(exp(0, b"a || b").0),
+            &[Exp::Name("a"), Exp::Name("b"), Exp::Or]
+        );
+        assert_eq!(
+            &(exp(0, b"a && b").0),
+            &[Exp::Name("a"), Exp::Name("b"), Exp::And]
+        );
+        assert_eq!(
+            &(exp(0, b"!a && b").0),
+            &[Exp::Name("a"), Exp::Not, Exp::Name("b"), Exp::And]
+        );
+        assert_eq!(
+            &(exp(0, b"!a && !b").0),
+            &[Exp::Name("a"), Exp::Not, Exp::Name("b"), Exp::Not, Exp::And]
+        );
+        assert_eq!(
+            &(exp(0, b"a && !b").0),
+            &[Exp::Name("a"), Exp::Name("b"), Exp::Not, Exp::And]
+        );
+
+        // dbg!(exp(0, b"c || !(a && b)").0);
+        // dbg!(exp(0, b"c || !a && b").0);
+    }
 
     #[test]
     fn it_works() {
