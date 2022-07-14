@@ -1,0 +1,11 @@
+[package]
+name = "preproc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ahash = "0.7.6"
+simdutf8 = "0.1.4"
+codespan-reporting = "0.11.1"
