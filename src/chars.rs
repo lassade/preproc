@@ -8,6 +8,12 @@ pub struct Chars<'a> {
     ch: Option<char>,
 }
 
+/// Points to a valid UTF8 character inside a [`str`], used to take sub strings
+#[derive(Copy, Clone)]
+pub struct Cursor {
+    ptr: *const u8,
+}
+
 impl<'a> Chars<'a> {
     #[inline]
     pub fn offset_from_source_str(&self) -> usize {
@@ -15,8 +21,8 @@ impl<'a> Chars<'a> {
     }
 
     #[inline]
-    pub fn ptr(&self) -> *const u8 {
-        self.ptr
+    pub fn cursor(&self) -> Cursor {
+        Cursor { ptr: self.ptr }
     }
 
     #[inline]
@@ -25,13 +31,28 @@ impl<'a> Chars<'a> {
     }
 
     #[inline]
-    pub fn srouce_str(&self) -> &str {
+    pub fn sub_str_from_cursor(&self, cursor: Cursor) -> &'a str {
+        unsafe {
+            let offset = cursor.ptr.offset_from(self.src.as_ptr());
+            assert!(
+                0 <= offset && (offset as usize) < self.src.len(),
+                "cursor is from a different str"
+            );
+            from_utf8_unchecked(slice::from_raw_parts(
+                cursor.ptr,
+                self.ptr.offset_from(cursor.ptr) as _,
+            ))
+        }
+    }
+
+    #[inline]
+    pub fn source_str(&self) -> &'a str {
         self.src
     }
 
     #[must_use]
     #[inline]
-    pub fn remainer_str(&self) -> &str {
+    pub fn remainer_str(&self) -> &'a str {
         // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
         unsafe { from_utf8_unchecked(self.iter.as_slice()) }
     }

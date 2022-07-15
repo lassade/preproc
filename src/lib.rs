@@ -1,10 +1,9 @@
 //! Handle `#include`, `#if` and `#define` `#undef` directives in any source file
 
-use core::slice;
 use std::{
     fs,
     path::{Path, PathBuf},
-    str::{self, from_utf8_unchecked},
+    str::{self},
 };
 
 use ahash::AHashSet;
@@ -148,8 +147,10 @@ enum Event<'a> {
 }
 
 fn parse_line<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
-    let line = text.ptr();
+    let line_cursor = text.cursor();
+
     ignore_spaces(text);
+
     match text.peek() {
         Some('#') => {
             match directive(text) {
@@ -167,31 +168,21 @@ fn parse_line<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
                 _ => {
                     // ignores unknow directive
                     next_line(text);
-                    Ok(Event::Code(unsafe {
-                        from_utf8_unchecked(slice::from_raw_parts(
-                            line,
-                            text.ptr().offset_from(line) as _,
-                        ))
-                    }))
+                    Ok(Event::Code(text.sub_str_from_cursor(line_cursor)))
                 }
             }
         }
         Some(_) => {
             // no more directives can be found in here skip to the next line
             next_line(text);
-            Ok(Event::Code(unsafe {
-                from_utf8_unchecked(slice::from_raw_parts(
-                    line,
-                    text.ptr().offset_from(line) as _,
-                ))
-            }))
+            Ok(Event::Code(text.sub_str_from_cursor(line_cursor)))
         }
         None => Ok(Event::EOF),
     }
 }
 
 fn directive<'a>(text: &mut Chars<'a>) -> &'a str {
-    let src = text.ptr();
+    let directive_cursor = text.cursor();
 
     // read until the next whitespace or enter
     while let Some(ch) = text.peek() {
@@ -202,10 +193,7 @@ fn directive<'a>(text: &mut Chars<'a>) -> &'a str {
         }
     }
 
-    unsafe {
-        let input = slice::from_raw_parts(src, text.ptr().offset_from(src) as _);
-        from_utf8_unchecked(input)
-    }
+    text.sub_str_from_cursor(directive_cursor)
 }
 
 fn ignore_spaces(text: &mut Chars) {
@@ -247,18 +235,12 @@ fn include<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
 
     text.next();
 
-    let path = text.ptr();
+    let path_cursor = text.cursor();
     let path_offset = text.offset_from_source_str();
 
     while let Some(ch) = text.peek() {
         if ch == delimiter {
-            let path = unsafe {
-                from_utf8_unchecked(slice::from_raw_parts(
-                    path,
-                    text.ptr().offset_from(path) as _,
-                ))
-            };
-            return Ok(Event::Include(path));
+            return Ok(Event::Include(text.sub_str_from_cursor(path_cursor)));
         }
         match ch {
             '\n' | '\r' => {
@@ -346,8 +328,8 @@ fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
 fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
     ignore_spaces(text);
 
-    let ptr = text.ptr();
     let name;
+    let name_cursor = text.cursor();
 
     loop {
         if let Some(ch) = text.peek() {
@@ -355,13 +337,7 @@ fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 text.next();
                 continue;
             } else {
-                name = unsafe {
-                    str::from_utf8_unchecked(slice::from_raw_parts(
-                        ptr,
-                        text.ptr().offset_from(ptr) as _,
-                    ))
-                };
-
+                name = text.sub_str_from_cursor(name_cursor);
                 if ch == ' ' || ch == '\t' {
                     text.next();
                 }
@@ -369,13 +345,7 @@ fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 break;
             }
         } else {
-            name = unsafe {
-                str::from_utf8_unchecked(slice::from_raw_parts(
-                    ptr,
-                    text.ptr().offset_from(ptr) as _,
-                ))
-            };
-
+            name = text.sub_str_from_cursor(name_cursor);
             break;
         }
     }
