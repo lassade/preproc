@@ -1,10 +1,11 @@
 [package]
 name = "preproc"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "a sane pre-processor for shaders and any other language"
 license = "MIT OR Apache-2.0"
-documentation = "https://docs.rs/fpng-rs"
+documentation = "https://docs.rs/preproc/0.1.1/"
+repository = "https://github.com/lassade/preproc"
 authors = ["Felipe Jorge <felipe.jorge.pereira@gmail.com>"]
 
 [dependencies]
