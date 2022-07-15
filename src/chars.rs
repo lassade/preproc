@@ -1,39 +1,52 @@
-use core::{ptr::null, slice};
+use core::{ptr::null, slice, str::from_utf8_unchecked};
 
 /// Similar to [`core::str::Chars`] but it can peek and retain pointer information
 pub struct Chars<'a> {
-    bytes: slice::Iter<'a, u8>,
-    current_ptr: *const u8,
-    current: Option<char>,
+    src: &'a str,
+    iter: slice::Iter<'a, u8>,
+    ptr: *const u8,
+    ch: Option<char>,
 }
 
 impl<'a> Chars<'a> {
     #[inline]
-    pub fn from_str(s: &str) -> Chars {
-        let mut chars = Chars {
-            bytes: s.as_bytes().iter(),
-            current_ptr: null(),
-            current: None,
-        };
-        chars.next();
-        chars
+    pub fn offset_from_source_str(&self) -> usize {
+        unsafe { self.ptr.offset_from(self.src.as_ptr()) as _ }
     }
 
     #[inline]
-    pub fn as_ptr(&self) -> *const u8 {
-        self.current_ptr
+    pub fn ptr(&self) -> *const u8 {
+        self.ptr
     }
 
     #[inline]
     pub fn peek(&self) -> Option<char> {
-        self.current
+        self.ch
+    }
+
+    #[inline]
+    pub fn srouce_str(&self) -> &str {
+        self.src
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn remainer_str(&self) -> &str {
+        // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
+        unsafe { from_utf8_unchecked(self.iter.as_slice()) }
     }
 }
 
-impl<'a> Into<Chars<'a>> for &'a str {
-    #[inline]
-    fn into(self) -> Chars<'a> {
-        Chars::from_str(self)
+impl<'a> From<&'a str> for Chars<'a> {
+    fn from(src: &'a str) -> Self {
+        let mut chars = Chars {
+            src,
+            iter: src.as_bytes().iter(),
+            ptr: null(),
+            ch: None,
+        };
+        chars.next();
+        chars
     }
 }
 
@@ -42,12 +55,11 @@ impl<'a> Iterator for Chars<'a> {
 
     #[inline]
     fn next(&mut self) -> Option<char> {
-        let tmp = self.current;
-        self.current_ptr = self.bytes.as_slice().as_ptr();
+        let tmp = self.ch;
+        self.ptr = self.iter.as_slice().as_ptr();
         // SAFETY: `str` invariant says `self.iter` is a valid UTF-8 string and
         // the resulting `ch` is a valid Unicode Scalar Value.
-        self.current =
-            next_code_point(&mut self.bytes).map(|ch| unsafe { char::from_u32_unchecked(ch) });
+        self.ch = next_code_point(&mut self.iter).map(|ch| unsafe { char::from_u32_unchecked(ch) });
         tmp
     }
 }
@@ -104,4 +116,21 @@ fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32>
     }
 
     Some(ch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iter() {
+        let mut chars = Chars::from("abcd");
+        assert_eq!(chars.peek(), Some('a'));
+        assert_eq!(chars.next(), Some('a'));
+        assert_eq!(chars.peek(), Some('b'));
+        assert_eq!(chars.remainer_str(), "cd");
+        assert_eq!(chars.next(), Some('b'));
+        assert_eq!(chars.peek(), Some('c'));
+        assert_eq!(chars.remainer_str(), "d");
+    }
 }

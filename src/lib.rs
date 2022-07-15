@@ -4,7 +4,7 @@ use core::slice;
 use std::{
     fs,
     path::{Path, PathBuf},
-    str,
+    str::{self, from_utf8_unchecked},
 };
 
 use ahash::AHashSet;
@@ -23,9 +23,7 @@ type Result<T> = core::result::Result<T, Diagnostic<usize>>;
 
 #[derive(Default)]
 pub struct PP {
-    /// Search paths for include files
     search_paths: Vec<PathBuf>,
-    /// Current list of defines
     defines: AHashSet<String>,
 }
 
@@ -45,20 +43,88 @@ impl PP {
         self
     }
 
-    pub fn parse_str(&self, input: &str) {
-        let bytes = input.as_bytes();
+    pub fn parse_file(&self, input_file: impl AsRef<Path>) -> String {
+        let bytes = fs::read(input_file).expect("failed to read file");
+        self.parse_str(from_utf8(&bytes).expect("only support utf8"))
+    }
+
+    pub fn parse_str(&self, input: &str) -> String {
+        let mut output = String::default();
+        self.parse_internal(input, &mut output);
+        output
+    }
+
+    fn parse_internal(&self, input: &str, output: &mut String) {
         // process all the file
-        let mut line = 0;
-        while line < bytes.len() {
-            let (evn, next) = parse(line, &bytes);
-            dbg!(evn);
-            line = next;
+        let mut text: Chars = input.into();
+        let mut expressions = vec![];
+        let mut scratch = vec![];
+        while text.peek().is_some() {
+            match parse_line(&mut text).expect("not error") {
+                Event::Include(path) => {
+                    // todo: cache previous included files
+                    // todo: call parse internal
+                    //self.parse_internal(input, output)
+                }
+                Event::Code(code) => {
+                    if Some(false) == expressions.last().copied() {
+                        // ignore
+                    } else {
+                        output.push_str(code);
+                    }
+                }
+                Event::If(exp) => {
+                    expressions.push(
+                        self.eval(&mut scratch, &exp[..])
+                            .expect("something is wrong"),
+                    );
+                }
+                Event::ElseIf(exp) => {
+                    expressions.pop();
+                    expressions.push(
+                        self.eval(&mut scratch, &exp[..])
+                            .expect("something is wrong"),
+                    );
+                }
+                Event::Else => {
+                    if let Some(b) = expressions.pop() {
+                        expressions.push(!b);
+                    }
+                }
+                Event::EndIf => {
+                    expressions.pop();
+                }
+                Event::EOF => {
+                    break;
+                }
+            }
         }
     }
 
-    pub fn parse_file(&self, input_file: impl AsRef<Path>) {
-        let bytes = fs::read(input_file).expect("failed to read file");
-        self.parse_str(from_utf8(&bytes).expect("only support utf8"));
+    fn eval<'a>(&self, scratch: &mut Vec<bool>, exp: &[Exp<'a>]) -> Option<bool> {
+        scratch.clear();
+
+        for op in exp {
+            match op {
+                Exp::Name(define) => scratch.push(self.defines.contains(*define)),
+                Exp::And => {
+                    let r = scratch.pop()? && scratch.pop()?;
+                    scratch.push(r);
+                }
+                Exp::Or => {
+                    let r = scratch.pop()? || scratch.pop()?;
+                    scratch.push(r);
+                }
+                Exp::Not => {
+                    let r = !(scratch.pop()?);
+                    scratch.push(r);
+                }
+            }
+        }
+
+        let result = scratch.pop();
+        assert!(scratch.len() == 0, "malformed expression");
+        result
     }
 }
 
@@ -72,177 +138,160 @@ enum Exp<'a> {
 
 #[derive(Debug)]
 enum Event<'a> {
-    Code,
+    Code(&'a str),
     Include(&'a str),
     If(Vec<Exp<'a>>),
     ElseIf(Vec<Exp<'a>>),
     Else,
     EndIf,
+    EOF,
 }
 
-fn parse(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
-    for i in offset..bytes.len() {
-        match bytes[i] {
-            b'\n' | b'\r' => {
-                // next line
-                return (Ok(Event::Code), i + 1);
-            }
-            b'\t' | b' ' => {} // just move forward
-            b'#' => {
-                let j = next(i, bytes);
-                let directive = from_utf8(&bytes[i..j]).expect("not utf8");
-                match directive {
-                    "#include" => {
-                        return include(j, bytes);
-                    }
-                    "#if" => {
-                        todo!();
-                        // let (r, next) = exp(j, bytes);
-                        // return (Ok(Event::If(r)), next);
-                    }
-                    "#elif" => {
-                        todo!();
-                        // let (r, next) = exp(j, bytes);
-                        // return (Ok(Event::ElseIf(r)), next);
-                    }
-                    "#else" => {
-                        return (Ok(Event::Else), next_line(j, bytes));
-                    }
-                    "#endif" => {
-                        return (Ok(Event::EndIf), next_line(j, bytes));
-                    }
-                    _ => {
-                        // ignores unknow directive
-                        return (Ok(Event::Code), next_line(j, bytes));
-                    }
+fn parse_line<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
+    let line = text.ptr();
+    ignore_spaces(text);
+    match text.peek() {
+        Some('#') => {
+            match directive(text) {
+                "#include" => include(text),
+                "#if" => Ok(Event::If(exp(text))),
+                "#elif" => Ok(Event::ElseIf(exp(text))),
+                "#else" => {
+                    next_line(text);
+                    Ok(Event::Else)
+                }
+                "#endif" => {
+                    next_line(text);
+                    Ok(Event::EndIf)
+                }
+                _ => {
+                    // ignores unknow directive
+                    next_line(text);
+                    Ok(Event::Code(unsafe {
+                        from_utf8_unchecked(slice::from_raw_parts(
+                            line,
+                            text.ptr().offset_from(line) as _,
+                        ))
+                    }))
                 }
             }
-            _ => {
-                // no more directives can be found in here skip to the next line
-                return (Ok(Event::Code), next_line(i, bytes));
-            }
         }
+        Some(_) => {
+            // no more directives can be found in here skip to the next line
+            next_line(text);
+            Ok(Event::Code(unsafe {
+                from_utf8_unchecked(slice::from_raw_parts(
+                    line,
+                    text.ptr().offset_from(line) as _,
+                ))
+            }))
+        }
+        None => Ok(Event::EOF),
     }
-    return (Ok(Event::Code), bytes.len());
 }
 
-fn next(offset: usize, bytes: &[u8]) -> usize {
-    for i in offset..bytes.len() {
-        match bytes[i] {
-            b'\t' | b' ' | b'\n' | b'\r' => {
-                return i;
-            }
-            _ => {}
+fn directive<'a>(text: &mut Chars<'a>) -> &'a str {
+    let src = text.ptr();
+
+    // read until the next whitespace or enter
+    while let Some(ch) = text.peek() {
+        if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+            break;
+        } else {
+            text.next();
         }
     }
-    // bytes eneded
-    return bytes.len();
+
+    unsafe {
+        let input = slice::from_raw_parts(src, text.ptr().offset_from(src) as _);
+        from_utf8_unchecked(input)
+    }
 }
 
 fn ignore_spaces(text: &mut Chars) {
     while let Some(ch) = text.peek() {
-        match ch {
-            '\t' | ' ' => {
-                text.next();
-            }
-            _ => {
-                break;
-            }
+        if ch == ' ' || ch == '\t' {
+            text.next();
+        } else {
+            break;
         }
     }
 }
 
-fn next_line(mut offset: usize, bytes: &[u8]) -> usize {
-    // loop {
-    //     if offset >= bytes.len() {
-    //         break;
-    //     }
-
-    //     let byte = bytes[offset];
-    //     let len = utf8_byte_count(byte);
-    //     offset += len;
-
-    //     // ascii only
-    //     if len != 1 {
-    //         continue;
-    //     }
-
-    //     match byte {
-    //         b'\n' | b'\r' => {
-    //             return offset;
-    //         }
-    //         _ => {}
-    //     }
-    // }
-
-    // bytes eneded
-    return offset;
+fn next_line(text: &mut Chars) {
+    while let Some(ch) = text.peek() {
+        text.next();
+        match ch {
+            '\n' | '\r' => {
+                break;
+            }
+            _ => {}
+        }
+    }
 }
 
-fn include(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
-    let offset = ignore_spaces(offset, bytes);
-    match bytes.get(offset) {
-        Some(b'\"') => delimited_name(offset + 1, bytes, b'\"'),
-        Some(b'<') => delimited_name(offset + 1, bytes, b'>'),
+fn include<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
+    ignore_spaces(text);
+
+    let delimiter = match text.peek() {
+        Some('\"') => '\"',
+        Some('<') => '>',
         _ => {
+            let offset = text.offset_from_source_str();
             let d = Diagnostic::error()
                 .with_message("expecting `\"` or `<`")
                 .with_labels(vec![Label::primary(0, offset..offset)]);
-            return (Err(d), 0);
+            return Err(d);
         }
-    }
-}
+    };
 
-fn delimited_name(offset: usize, bytes: &[u8], delimiter: u8) -> (Result<Event>, usize) {
-    let mut slash = false;
-    for j in offset..bytes.len() {
-        let b = bytes[j];
-        if b == delimiter {
-            let include_file = from_utf8(&bytes[offset..j]).expect("not utf8");
-            return (Ok(Event::Include(include_file)), next_line(j, bytes));
+    text.next();
+
+    let path = text.ptr();
+    let path_offset = text.offset_from_source_str();
+
+    while let Some(ch) = text.peek() {
+        if ch == delimiter {
+            let path = unsafe {
+                from_utf8_unchecked(slice::from_raw_parts(
+                    path,
+                    text.ptr().offset_from(path) as _,
+                ))
+            };
+            return Ok(Event::Include(path));
         }
-        match b {
-            b'/' => {
-                if slash {
-                    let d = Diagnostic::error()
-                        .with_message("expecting `\"` or `>`")
-                        .with_labels(vec![Label::primary(0, j - 1..j)]);
-                    return (Err(d), next_line(j, bytes));
-                }
-                slash = true;
-            }
-            b'*' => {
-                if slash {
-                    panic!("multiline comments not supported yet")
-                    // return Err(Diagnostic::error().with_message("expecting `\"` or `>`").with_labels(vec![Label::primary(0, j-1..j)]));
-                }
-                slash = false;
-            }
-            b'\n' | b'\r' => {
+        match ch {
+            '\n' | '\r' => {
+                let offset = text.offset_from_source_str();
                 let d = Diagnostic::error()
-                    .with_message("expecting `\"` or `>`")
-                    .with_labels(vec![Label::primary(0, offset..bytes.len())]);
-                return (Err(d), j + 1);
+                    .with_message(format!("expecting `{}`", delimiter))
+                    .with_labels(vec![Label::primary(0, offset..offset)
+                        .with_message(format!("expecting `{}`", delimiter))]);
+                return Err(d);
             }
-            _ => {
-                slash = false;
-            }
+            _ => {}
         }
+
+        text.next();
     }
 
+    let offset = text.offset_from_source_str();
     let d = Diagnostic::error()
-        .with_message("end of file reached, expecting `\"` or `>`")
-        .with_labels(vec![Label::primary(0, offset..bytes.len())]);
-    return (Err(d), bytes.len());
+        .with_message("reached end of file")
+        .with_labels(vec![Label::primary(0, path_offset..offset)
+            .with_message(format!("expecting `{}`", delimiter))]);
+    return Err(d);
 }
 
 fn exp<'a>(text: &mut Chars<'a>) -> Vec<Exp<'a>> {
     let mut exp = vec![];
-    let next = exp_inner(text, &mut exp);
+    exp_internal(text, &mut exp);
     exp
 }
 
-fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
+fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
+    ignore_spaces(text);
+
     let mut op = 0;
     while let Some(ch) = text.peek() {
         match ch {
@@ -252,7 +301,7 @@ fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
             '|' => {
                 text.next();
                 if op == 1 {
-                    exp_inner(text, exp);
+                    exp_internal(text, exp);
                     exp.push(Exp::Or);
                     op = 0;
                 }
@@ -261,7 +310,7 @@ fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
             '&' => {
                 text.next();
                 if op == 2 {
-                    exp_inner(text, exp);
+                    exp_internal(text, exp);
                     exp.push(Exp::And);
                     op = 0;
                 }
@@ -271,9 +320,8 @@ fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 text.next();
 
                 // find if the expressions should be groupped or not
-                ignore_spaces_alt(text);
                 match text.peek() {
-                    Some('(') => exp_inner(text, exp),
+                    Some('(') => exp_internal(text, exp),
                     _ => exp_name(text, exp),
                 }
 
@@ -284,17 +332,21 @@ fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 text.next();
                 return;
             }
-            _ => {
-                exp_name(text, exp);
+            ch => {
+                if ch.is_ascii_alphanumeric() {
+                    exp_name(text, exp);
+                } else {
+                    return;
+                }
             }
         }
     }
 }
 
 fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
-    ignore_spaces_alt(text);
+    ignore_spaces(text);
 
-    let ptr = text.as_ptr();
+    let ptr = text.ptr();
     let name;
 
     loop {
@@ -306,11 +358,11 @@ fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 name = unsafe {
                     str::from_utf8_unchecked(slice::from_raw_parts(
                         ptr,
-                        text.as_ptr().offset_from(ptr) as _,
+                        text.ptr().offset_from(ptr) as _,
                     ))
                 };
 
-                if ch.is_whitespace() {
+                if ch == ' ' || ch == '\t' {
                     text.next();
                 }
 
@@ -320,7 +372,7 @@ fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
             name = unsafe {
                 str::from_utf8_unchecked(slice::from_raw_parts(
                     ptr,
-                    text.as_ptr().offset_from(ptr) as _,
+                    text.ptr().offset_from(ptr) as _,
                 ))
             };
 
@@ -395,8 +447,7 @@ mod tests {
 
     #[test]
     fn src_input() {
-        let input = r#"
-        #include "somefile.wgsl" // comment
+        let input = r#"#include "somefile.wgsl" // comment
 
         #if SHADOWS // some comment
         fn func() -> f32 {
@@ -406,9 +457,8 @@ mod tests {
         fn func() -> f32 {
             return 0.0;
         }
-        #endif
-        "#;
+        #endif"#;
 
-        PP::default().define("SHADOWS").parse_str(input);
+        println!("{}", PP::default().define("SHADOWS").parse_str(input));
     }
 }
