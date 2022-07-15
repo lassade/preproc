@@ -45,17 +45,17 @@ impl<'a> Chars<'a> {
         }
     }
 
-    #[inline]
-    pub fn source_str(&self) -> &'a str {
-        self.src
-    }
+    // #[inline]
+    // pub fn source_str(&self) -> &'a str {
+    //     self.src
+    // }
 
-    #[must_use]
-    #[inline]
-    pub fn remainer_str(&self) -> &'a str {
-        // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
-        unsafe { from_utf8_unchecked(self.iter.as_slice()) }
-    }
+    // #[must_use]
+    // #[inline]
+    // pub fn remainer_str(&self) -> &'a str {
+    //     // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
+    //     unsafe { from_utf8_unchecked(self.iter.as_slice()) }
+    // }
 }
 
 impl<'a> From<&'a str> for Chars<'a> {
@@ -149,9 +149,9 @@ mod tests {
         assert_eq!(chars.peek(), Some('a'));
         assert_eq!(chars.next(), Some('a'));
         assert_eq!(chars.peek(), Some('b'));
-        assert_eq!(chars.remainer_str(), "cd");
+        // assert_eq!(chars.remainer_str(), "cd");
         assert_eq!(chars.next(), Some('b'));
         assert_eq!(chars.peek(), Some('c'));
-        assert_eq!(chars.remainer_str(), "d");
+        // assert_eq!(chars.remainer_str(), "d");
     }
 }

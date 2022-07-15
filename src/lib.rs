@@ -301,8 +301,9 @@ fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                     exp_internal(text, exp);
                     exp.push(Exp::Or);
                     op = 0;
+                } else {
+                    op = 1;
                 }
-                op = 1;
             }
             '&' => {
                 text.next();
@@ -310,8 +311,9 @@ fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                     exp_internal(text, exp);
                     exp.push(Exp::And);
                     op = 0;
+                } else {
+                    op = 2;
                 }
-                op = 2;
             }
             '!' => {
                 text.next();
