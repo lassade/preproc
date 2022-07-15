@@ -62,8 +62,23 @@ impl PP {
             match parse_line(&mut text).expect("not error") {
                 Event::Include(path) => {
                     // todo: cache previous included files
-                    // todo: call parse internal
-                    //self.parse_internal(input, output)
+                    let mut found = false;
+                    for search_path in &self.search_paths {
+                        let path = search_path.join(path);
+
+                        if let Ok(bytes) = fs::read(path) {
+                            self.parse_internal(
+                                from_utf8(&bytes).expect("only support utf8"),
+                                output,
+                            );
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        panic!("file not found");
+                    }
                 }
                 Event::Code(code) => {
                     if Some(false) == expressions.last().copied() {

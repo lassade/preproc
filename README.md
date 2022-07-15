@@ -79,3 +79,10 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     return in.color * shading(in.normal, light_dir);
 }
 ```
+
+# Milestones
+
+- [x] Basic functionality with `#include`, `#if`, `#elif`, `#else` and `endif`
+- [ ] Support `#define` and `#undef`
+- [ ] Fuzz test
+- [ ] Better error reporing
