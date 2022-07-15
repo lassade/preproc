@@ -431,19 +431,40 @@ mod tests {
     }
 
     #[test]
-    fn src_input() {
-        let input = r#"#include "somefile.wgsl" // comment
+    fn conditional() {
+        let input = r#"#if SHADOWS // some comment
+fn func() -> f32 {
+    return 1.0;
+}
+#else
+fn func() -> f32 {
+    return 0.0;
+}
+#endif"#;
 
-        #if SHADOWS // some comment
-        fn func() -> f32 {
-            return 1.0;
-        }
-        #else
-        fn func() -> f32 {
-            return 0.0;
-        }
-        #endif"#;
-
-        println!("{}", PP::default().define("SHADOWS").parse_str(input));
+        assert_eq!(
+            PP::default().define("SHADOWS").parse_str(input),
+            r#"// some comment
+fn func() -> f32 {
+    return 1.0;
+}
+"#
+        );
     }
+
+    // fn include() {
+    //     let input = r#"#include "somefile.wgsl" // comment
+
+    //     #if SHADOWS // some comment
+    //     fn func() -> f32 {
+    //         return 1.0;
+    //     }
+    //     #else
+    //     fn func() -> f32 {
+    //         return 0.0;
+    //     }
+    //     #endif"#;
+
+    //     println!("{}", PP::default().define("SHADOWS").parse_str(input));
+    // }
 }

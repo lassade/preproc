@@ -2,8 +2,10 @@
 name = "preproc"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "a sane pre-processor for shaders and any other language"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/fpng-rs"
+authors = ["Felipe Jorge <felipe.jorge.pereira@gmail.com>"]
 
 [dependencies]
 ahash = "0.7.6"
