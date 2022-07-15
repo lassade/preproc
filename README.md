@@ -4,6 +4,8 @@ A simple C# like pre-processor for any source file.
 
 # Usage
 
+With a build script you can pre-preprocess your shaders and output the needed variants
+
 ```rust
 // build.rs
 use std::{env, fs};
@@ -21,6 +23,18 @@ fn main() {
 ```
 
 ```wgsl
+// vertex_color.wgsl
+#include <shading.wgsl>
+#include <vert.wgsl>
+
+@fragment
+fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
+    return in.color * shading(in.normal, light_dir);
+}
+```
+
+
+```wgsl
 // shading.wgsl
 #if LAMBERT
 fn shading(normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
@@ -35,16 +49,7 @@ fn shading(normal: vec3<f32>, light_dir: vec3<f32>) -> f32 {
 #endif
 ```
 
-```wgsl
-// vertex_color.wgsl
-#include <shading.wgsl>
-#include <vert.wgsl>
-
-@fragment
-fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
-    return in.color * shading(in.normal, light_dir);
-}
-```
+outputs:
 
 ```wgsl
 // unlit_vertex_color.wgsl
@@ -59,6 +64,7 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     return in.color * shading(in.normal, light_dir);
 }
 ```
+and
 
 ```wgsl
 // lambert_vertex_color.wgsl
