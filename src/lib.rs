@@ -122,11 +122,15 @@ impl PP {
             match op {
                 Exp::Name(define) => scratch.push(self.defines.contains(*define)),
                 Exp::And => {
-                    let r = scratch.pop()? && scratch.pop()?;
+                    let a = scratch.pop()?;
+                    let b = scratch.pop()?;
+                    let r = a && b;
                     scratch.push(r);
                 }
                 Exp::Or => {
-                    let r = scratch.pop()? || scratch.pop()?;
+                    let a = scratch.pop()?;
+                    let b = scratch.pop()?;
+                    let r = a || b;
                     scratch.push(r);
                 }
                 Exp::Not => {
@@ -137,7 +141,7 @@ impl PP {
         }
 
         let result = scratch.pop();
-        assert!(scratch.len() == 0, "malformed expression");
+        assert!(scratch.len() == 0, "malformed expression {:?}", exp);
         result
     }
 }
