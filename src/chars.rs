@@ -1,20 +1,39 @@
-use core::slice;
+use core::{ptr::null, slice};
 
-/// Similar to [`core::str::Chars`] but it can peek and retain ptr information
+/// Similar to [`core::str::Chars`] but it can peek and retain pointer information
 pub struct Chars<'a> {
-    iter: slice::Iter<'a, u8>,
+    bytes: slice::Iter<'a, u8>,
+    current_ptr: *const u8,
     current: Option<char>,
 }
 
 impl<'a> Chars<'a> {
     #[inline]
+    pub fn from_str(s: &str) -> Chars {
+        let mut chars = Chars {
+            bytes: s.as_bytes().iter(),
+            current_ptr: null(),
+            current: None,
+        };
+        chars.next();
+        chars
+    }
+
+    #[inline]
     pub fn as_ptr(&self) -> *const u8 {
-        self.iter.as_slice().as_ptr()
+        self.current_ptr
     }
 
     #[inline]
     pub fn peek(&self) -> Option<char> {
         self.current
+    }
+}
+
+impl<'a> Into<Chars<'a>> for &'a str {
+    #[inline]
+    fn into(self) -> Chars<'a> {
+        Chars::from_str(self)
     }
 }
 
@@ -24,16 +43,17 @@ impl<'a> Iterator for Chars<'a> {
     #[inline]
     fn next(&mut self) -> Option<char> {
         let tmp = self.current;
+        self.current_ptr = self.bytes.as_slice().as_ptr();
         // SAFETY: `str` invariant says `self.iter` is a valid UTF-8 string and
         // the resulting `ch` is a valid Unicode Scalar Value.
         self.current =
-            unsafe { next_code_point(&mut self.iter).map(|ch| char::from_u32_unchecked(ch)) };
+            next_code_point(&mut self.bytes).map(|ch| unsafe { char::from_u32_unchecked(ch) });
         tmp
     }
 }
 
 #[inline]
-unsafe fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32> {
+fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32> {
     /// Returns the initial codepoint accumulator for the first byte.
     /// The first byte is special, only want bottom 5 bits for width 2, 4 bits
     /// for width 3, and 3 bits for width 4.

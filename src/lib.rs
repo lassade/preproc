@@ -1,5 +1,6 @@
 //! Handle `#include`, `#if` and `#define` `#undef` directives in any source file
 
+use core::slice;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -7,6 +8,7 @@ use std::{
 };
 
 use ahash::AHashSet;
+use chars::Chars;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use simdutf8::basic::from_utf8;
 
@@ -94,12 +96,14 @@ fn parse(offset: usize, bytes: &[u8]) -> (Result<Event>, usize) {
                         return include(j, bytes);
                     }
                     "#if" => {
-                        let (r, next) = exp(j, bytes);
-                        return (Ok(Event::If(r)), next);
+                        todo!();
+                        // let (r, next) = exp(j, bytes);
+                        // return (Ok(Event::If(r)), next);
                     }
                     "#elif" => {
-                        let (r, next) = exp(j, bytes);
-                        return (Ok(Event::ElseIf(r)), next);
+                        todo!();
+                        // let (r, next) = exp(j, bytes);
+                        // return (Ok(Event::ElseIf(r)), next);
                     }
                     "#else" => {
                         return (Ok(Event::Else), next_line(j, bytes));
@@ -135,41 +139,41 @@ fn next(offset: usize, bytes: &[u8]) -> usize {
     return bytes.len();
 }
 
-fn ignore_spaces(offset: usize, bytes: &[u8]) -> usize {
-    for i in offset..bytes.len() {
-        match bytes[i] {
-            b'\t' | b' ' => {}
+fn ignore_spaces(text: &mut Chars) {
+    while let Some(ch) = text.peek() {
+        match ch {
+            '\t' | ' ' => {
+                text.next();
+            }
             _ => {
-                return i;
+                break;
             }
         }
     }
-    // bytes eneded
-    return bytes.len();
 }
 
 fn next_line(mut offset: usize, bytes: &[u8]) -> usize {
-    loop {
-        if offset >= bytes.len() {
-            break;
-        }
+    // loop {
+    //     if offset >= bytes.len() {
+    //         break;
+    //     }
 
-        let byte = bytes[offset];
-        let len = utf8_byte_count(byte);
-        offset += len;
+    //     let byte = bytes[offset];
+    //     let len = utf8_byte_count(byte);
+    //     offset += len;
 
-        // ascii only
-        if len != 1 {
-            continue;
-        }
+    //     // ascii only
+    //     if len != 1 {
+    //         continue;
+    //     }
 
-        match byte {
-            b'\n' | b'\r' => {
-                return offset;
-            }
-            _ => {}
-        }
-    }
+    //     match byte {
+    //         b'\n' | b'\r' => {
+    //             return offset;
+    //         }
+    //         _ => {}
+    //     }
+    // }
 
     // bytes eneded
     return offset;
@@ -232,119 +236,100 @@ fn delimited_name(offset: usize, bytes: &[u8], delimiter: u8) -> (Result<Event>,
     return (Err(d), bytes.len());
 }
 
-fn exp<'a>(mut offset: usize, bytes: &'a [u8]) -> (Vec<Exp<'a>>, usize) {
+fn exp<'a>(text: &mut Chars<'a>) -> Vec<Exp<'a>> {
     let mut exp = vec![];
-    exp_inner(&mut offset, bytes, &mut exp);
-    (exp, offset)
+    let next = exp_inner(text, &mut exp);
+    exp
 }
 
-fn exp_inner<'a>(offset: &mut usize, bytes: &'a [u8], exp: &mut Vec<Exp<'a>>) {
+fn exp_inner<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
     let mut op = 0;
-    loop {
-        if *offset >= bytes.len() {
-            break;
-        }
-
-        let byte = bytes[*offset];
-        let len = utf8_byte_count(byte);
-
-        // ascii only
-        if len != 1 {
-            *offset = *offset + len;
-            continue;
-        }
-
-        match byte {
-            b'(' => {
-                *offset = *offset + 1;
-                exp_name(offset, bytes, exp);
+    while let Some(ch) = text.peek() {
+        match ch {
+            '(' => {
+                text.next();
             }
-            b'|' => {
-                *offset = *offset + 1;
+            '|' => {
+                text.next();
                 if op == 1 {
-                    exp_inner(offset, bytes, exp);
+                    exp_inner(text, exp);
                     exp.push(Exp::Or);
                     op = 0;
-                } else {
-                    op = 1;
                 }
+                op = 1;
             }
-            b'&' => {
-                *offset = *offset + 1;
+            '&' => {
+                text.next();
                 if op == 2 {
-                    exp_inner(offset, bytes, exp);
+                    exp_inner(text, exp);
                     exp.push(Exp::And);
                     op = 0;
-                } else {
-                    op = 2;
                 }
+                op = 2;
             }
-            b'!' => {
-                *offset = *offset + 1;
-                exp_inner(offset, bytes, exp);
+            '!' => {
+                text.next();
+
+                // find if the expressions should be groupped or not
+                ignore_spaces_alt(text);
+                match text.peek() {
+                    Some('(') => exp_inner(text, exp),
+                    _ => exp_name(text, exp),
+                }
+
                 exp.push(Exp::Not);
                 op = 0;
             }
-            b'/' => {
-                *offset = next_line(*offset, bytes);
-                return;
-            }
-            b')' | b'\n' | b'\r' => {
-                *offset = *offset + 1;
+            ')' | '\n' | '\r' => {
+                text.next();
                 return;
             }
             _ => {
-                exp_name(offset, bytes, exp);
+                exp_name(text, exp);
             }
         }
     }
 }
 
-fn exp_name<'a>(offset: &mut usize, bytes: &'a [u8], exp: &mut Vec<Exp<'a>>) {
-    *offset = ignore_spaces(*offset, bytes);
+fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
+    ignore_spaces_alt(text);
 
-    let n = *offset;
-    let slice;
+    let ptr = text.as_ptr();
+    let name;
+
     loop {
-        if *offset == bytes.len() {
-            // take the remainder
-            slice = &bytes[n..(*offset)];
+        if let Some(ch) = text.peek() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                text.next();
+                continue;
+            } else {
+                name = unsafe {
+                    str::from_utf8_unchecked(slice::from_raw_parts(
+                        ptr,
+                        text.as_ptr().offset_from(ptr) as _,
+                    ))
+                };
+
+                if ch.is_whitespace() {
+                    text.next();
+                }
+
+                break;
+            }
+        } else {
+            name = unsafe {
+                str::from_utf8_unchecked(slice::from_raw_parts(
+                    ptr,
+                    text.as_ptr().offset_from(ptr) as _,
+                ))
+            };
+
             break;
         }
-        assert!(*offset < bytes.len(), "worng encoding");
-
-        let byte = bytes[*offset];
-        let len = utf8_byte_count(byte);
-
-        // ascii only
-        if len != 1 {
-            *offset = *offset + len;
-            continue;
-        }
-
-        if (b'a' <= byte && byte <= b'z')
-            || (b'A' <= byte && byte <= b'Z')
-            || (b'0' <= byte && byte <= b'9')
-            || byte == b'_'
-        {
-            *offset = *offset + len;
-            continue;
-        }
-
-        // take the current
-        slice = &bytes[n..(*offset)];
-
-        if byte == b' ' || byte == b'\t' || byte == b'\n' || byte == b'\r' {
-            *offset = *offset + 1;
-        }
-
-        break;
     }
 
-    if slice.len() > 0 {
-        unsafe {
-            exp.push(Exp::Name(str::from_utf8_unchecked(slice)));
-        }
+    if name.len() > 0 {
+        exp.push(Exp::Name(name));
     }
 }
 
@@ -354,27 +339,54 @@ mod tests {
 
     #[test]
     fn expressions() {
-        assert_eq!(&(exp(0, b"a").0), &[Exp::Name("a")]);
-        assert_eq!(&(exp(0, b"!a").0), &[Exp::Name("a"), Exp::Not]);
+        fn test_exp<'a>(text: &'a str) -> Vec<Exp<'a>> {
+            let mut text: Chars = text.into();
+            super::exp(&mut text)
+        }
+
+        assert_eq!(&test_exp("a"), &[Exp::Name("a")]);
+        assert_eq!(&test_exp("!a"), &[Exp::Name("a"), Exp::Not]);
         assert_eq!(
-            &(exp(0, b"a || b").0),
+            &test_exp("a || b"),
             &[Exp::Name("a"), Exp::Name("b"), Exp::Or]
         );
         assert_eq!(
-            &(exp(0, b"a && b").0),
+            &test_exp("a && b"),
             &[Exp::Name("a"), Exp::Name("b"), Exp::And]
         );
         assert_eq!(
-            &(exp(0, b"!a && b").0),
+            &test_exp("!a && b"),
             &[Exp::Name("a"), Exp::Not, Exp::Name("b"), Exp::And]
         );
         assert_eq!(
-            &(exp(0, b"!a && !b").0),
+            &test_exp("!a && !b"),
             &[Exp::Name("a"), Exp::Not, Exp::Name("b"), Exp::Not, Exp::And]
         );
         assert_eq!(
-            &(exp(0, b"a && !b").0),
+            &test_exp("a && !b"),
             &[Exp::Name("a"), Exp::Name("b"), Exp::Not, Exp::And]
+        );
+        assert_eq!(
+            &test_exp("a && (!b || c)"),
+            &[
+                Exp::Name("a"),
+                Exp::Name("b"),
+                Exp::Not,
+                Exp::Name("c"),
+                Exp::Or,
+                Exp::And
+            ]
+        );
+        assert_eq!(
+            &test_exp("a && (((!b || c)))"),
+            &[
+                Exp::Name("a"),
+                Exp::Name("b"),
+                Exp::Not,
+                Exp::Name("c"),
+                Exp::Or,
+                Exp::And
+            ]
         );
 
         // dbg!(exp(0, b"c || !(a && b)").0);
@@ -382,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works() {
+    fn src_input() {
         let input = r#"
         #include "somefile.wgsl" // comment
 
