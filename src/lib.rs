@@ -27,17 +27,17 @@ pub struct PP {
 }
 
 impl PP {
-    pub fn search_path(mut self, path: impl Into<PathBuf>) -> Self {
+    pub fn search_path(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.search_paths.push(path.into());
         self
     }
 
-    pub fn define(mut self, define: &str) -> Self {
+    pub fn define(&mut self, define: &str) -> &mut Self {
         self.defines.insert(define.to_string());
         self
     }
 
-    pub fn undef(mut self, define: &str) -> Self {
+    pub fn undef(&mut self, define: &str) -> &mut Self {
         self.defines.remove(define);
         self
     }
