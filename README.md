@@ -82,7 +82,9 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
 
 # Milestones
 
-- [x] Basic functionality with `#include`, `#if`, `#elif`, `#else` and `endif`
-- [ ] Support `#define` and `#undef`
-- [ ] Fuzz test
-- [ ] Better error reporing
+- [x] basic functionality with `#include`, `#if`, `#elif`, `#else` and `endif`
+- [ ] `#define` and `#undef`
+- [ ] query all available defines
+- [ ] better error reporing
+- [ ] fuzz test
+- [ ] fewer allocations use an iterator (hard)

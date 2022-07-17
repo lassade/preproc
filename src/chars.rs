@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use core::{ptr::null, slice, str::from_utf8_unchecked};
 
 /// Similar to [`core::str::Chars`] but it can peek and retain pointer information
@@ -26,7 +28,7 @@ impl<'a> Chars<'a> {
     }
 
     #[inline]
-    pub fn peek(&self) -> Option<char> {
+    pub fn head(&self) -> Option<char> {
         self.ch
     }
 
@@ -45,17 +47,17 @@ impl<'a> Chars<'a> {
         }
     }
 
-    // #[inline]
-    // pub fn source_str(&self) -> &'a str {
-    //     self.src
-    // }
+    #[inline]
+    pub fn source(&self) -> &'a str {
+        self.src
+    }
 
-    // #[must_use]
-    // #[inline]
-    // pub fn remainer_str(&self) -> &'a str {
-    //     // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
-    //     unsafe { from_utf8_unchecked(self.iter.as_slice()) }
-    // }
+    #[must_use]
+    #[inline]
+    pub fn tail(&self) -> &'a str {
+        // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
+        unsafe { from_utf8_unchecked(self.iter.as_slice()) }
+    }
 }
 
 impl<'a> From<&'a str> for Chars<'a> {
@@ -146,12 +148,12 @@ mod tests {
     #[test]
     fn iter() {
         let mut chars = Chars::from("abcd");
-        assert_eq!(chars.peek(), Some('a'));
+        assert_eq!(chars.head(), Some('a'));
         assert_eq!(chars.next(), Some('a'));
-        assert_eq!(chars.peek(), Some('b'));
+        assert_eq!(chars.head(), Some('b'));
         // assert_eq!(chars.remainer_str(), "cd");
         assert_eq!(chars.next(), Some('b'));
-        assert_eq!(chars.peek(), Some('c'));
+        assert_eq!(chars.head(), Some('c'));
         // assert_eq!(chars.remainer_str(), "d");
     }
 }

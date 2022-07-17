@@ -13,11 +13,6 @@ use simdutf8::basic::from_utf8;
 
 mod chars;
 
-// 1. load file
-// 2. split into lines
-// 3. find and replace #include directives
-// 4. evaluate ifdef, ifndef and define expressions
-
 type Result<T> = core::result::Result<T, Diagnostic<usize>>;
 
 #[derive(Default)]
@@ -58,7 +53,7 @@ impl PP {
         let mut text: Chars = input.into();
         let mut expressions = vec![];
         let mut scratch = vec![];
-        while text.peek().is_some() {
+        while text.head().is_some() {
             match parse_line(&mut text).expect("not error") {
                 Event::Include(path) => {
                     // todo: cache previous included files
@@ -170,7 +165,7 @@ fn parse_line<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
 
     ignore_spaces(text);
 
-    match text.peek() {
+    match text.head() {
         Some('#') => {
             match directive(text) {
                 "#include" => include(text),
@@ -204,7 +199,7 @@ fn directive<'a>(text: &mut Chars<'a>) -> &'a str {
     let directive_cursor = text.cursor();
 
     // read until the next whitespace or enter
-    while let Some(ch) = text.peek() {
+    while let Some(ch) = text.head() {
         if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
             break;
         } else {
@@ -216,7 +211,7 @@ fn directive<'a>(text: &mut Chars<'a>) -> &'a str {
 }
 
 fn ignore_spaces(text: &mut Chars) {
-    while let Some(ch) = text.peek() {
+    while let Some(ch) = text.head() {
         if ch == ' ' || ch == '\t' {
             text.next();
         } else {
@@ -226,7 +221,7 @@ fn ignore_spaces(text: &mut Chars) {
 }
 
 fn next_line(text: &mut Chars) {
-    while let Some(ch) = text.peek() {
+    while let Some(ch) = text.head() {
         text.next();
         match ch {
             '\n' | '\r' => {
@@ -240,7 +235,7 @@ fn next_line(text: &mut Chars) {
 fn include<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
     ignore_spaces(text);
 
-    let delimiter = match text.peek() {
+    let delimiter = match text.head() {
         Some('\"') => '\"',
         Some('<') => '>',
         _ => {
@@ -257,7 +252,7 @@ fn include<'a>(text: &mut Chars<'a>) -> Result<Event<'a>> {
     let path_cursor = text.cursor();
     let path_offset = text.offset_from_source_str();
 
-    while let Some(ch) = text.peek() {
+    while let Some(ch) = text.head() {
         if ch == delimiter {
             return Ok(Event::Include(text.sub_str_from_cursor(path_cursor)));
         }
@@ -294,7 +289,7 @@ fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
     ignore_spaces(text);
 
     let mut op = 0;
-    while let Some(ch) = text.peek() {
+    while let Some(ch) = text.head() {
         match ch {
             '(' => {
                 text.next();
@@ -323,7 +318,7 @@ fn exp_internal<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
                 text.next();
 
                 // find if the expressions should be groupped or not
-                match text.peek() {
+                match text.head() {
                     Some('(') => exp_internal(text, exp),
                     _ => exp_name(text, exp),
                 }
@@ -353,7 +348,7 @@ fn exp_name<'a>(text: &mut Chars<'a>, exp: &mut Vec<Exp<'a>>) {
     let name_cursor = text.cursor();
 
     loop {
-        if let Some(ch) = text.peek() {
+        if let Some(ch) = text.head() {
             if ch.is_ascii_alphanumeric() || ch == '_' {
                 text.next();
                 continue;
