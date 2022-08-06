@@ -17,22 +17,22 @@ pub struct Cursor {
 }
 
 impl<'a> Chars<'a> {
-    #[inline]
+    #[inline(always)]
     pub fn offset_from_source_str(&self) -> usize {
         unsafe { self.ptr.offset_from(self.src.as_ptr()) as _ }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn cursor(&self) -> Cursor {
         Cursor { ptr: self.ptr }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn head(&self) -> Option<char> {
         self.ch
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn sub_str_from_cursor(&self, cursor: Cursor) -> &'a str {
         unsafe {
             let offset = cursor.ptr.offset_from(self.src.as_ptr());
@@ -47,13 +47,13 @@ impl<'a> Chars<'a> {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn source(&self) -> &'a str {
         self.src
     }
 
     #[must_use]
-    #[inline]
+    #[inline(always)]
     pub fn tail(&self) -> &'a str {
         // SAFETY: `Chars` is only made from a str, which guarantees the iter is valid UTF-8.
         unsafe { from_utf8_unchecked(self.iter.as_slice()) }
@@ -76,7 +76,7 @@ impl<'a> From<&'a str> for Chars<'a> {
 impl<'a> Iterator for Chars<'a> {
     type Item = char;
 
-    #[inline]
+    #[inline(always)]
     fn next(&mut self) -> Option<char> {
         let tmp = self.ch;
         self.ptr = self.iter.as_slice().as_ptr();
@@ -87,18 +87,18 @@ impl<'a> Iterator for Chars<'a> {
     }
 }
 
-#[inline]
+#[inline(always)]
 fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32> {
     /// Returns the initial codepoint accumulator for the first byte.
     /// The first byte is special, only want bottom 5 bits for width 2, 4 bits
     /// for width 3, and 3 bits for width 4.
-    #[inline]
+    #[inline(always)]
     const fn utf8_first_byte(byte: u8, width: u32) -> u32 {
         (byte & (0x7F >> width)) as u32
     }
 
     /// Returns the value of `ch` updated with continuation byte `byte`.
-    #[inline]
+    #[inline(always)]
     const fn utf8_acc_cont_byte(ch: u32, byte: u8) -> u32 {
         (ch << 6) | (byte & CONT_MASK) as u32
     }
