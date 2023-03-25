@@ -5,12 +5,12 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::rpn::{Op, RPExp};
+use crate::exp::{Exp, Op};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Line<'a> {
     Code(&'a str),
-    Directive(&'a str, RPExp<'a>),
+    Directive(&'a str, Option<Exp<'a>>),
     EOF,
 }
 
@@ -295,7 +295,7 @@ mod tests {
                 Line::Directive(d, exp) => {
                     text.push('#');
                     text.push_str(d);
-                    if !exp.is_empty() {
+                    if let Some(exp) = exp {
                         text.push(' ');
                         write!(text, "{}", exp).expect("invalid directive expression");
                     }
