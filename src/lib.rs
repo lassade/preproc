@@ -12,7 +12,7 @@ use hashbrown::HashSet;
 use simdutf8::basic::from_utf8;
 
 mod chars;
-mod exp;
+pub mod exp;
 mod sse2;
 
 type Result<T> = core::result::Result<T, Diagnostic<usize>>;

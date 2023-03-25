@@ -45,10 +45,11 @@ const BREAK: &'static [u8] = &[b'\t', b' ', b'!', b'&', b'(', b')', b'|'];
 /// Expression, internally it uses the Reverse Polish Notation (RPN) notation
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Exp<'a> {
-    pub exp: Vec<Op<'a>>,
+    pub ops: Vec<Op<'a>>,
 }
 
 impl<'a> Exp<'a> {
+    // todo: really bad performance
     pub fn from_str(exp: &'a str) -> Self {
         // uses the shunting yard algorithm
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
@@ -148,18 +149,18 @@ impl<'a> Exp<'a> {
             output.push(Op::from_str(token));
         }
 
-        Self { exp: output }
+        Self { ops: output }
     }
 
     #[inline(always)]
     pub fn is_empty(&self) -> bool {
-        self.exp.is_empty()
+        self.ops.is_empty()
     }
 
     pub fn is_valid(&self) -> bool {
         let mut stack_depth = 0;
 
-        for op in &self.exp {
+        for op in &self.ops {
             match op {
                 Op::Var(_) => stack_depth += 1,
                 Op::Or | Op::And => stack_depth -= 1,
@@ -173,7 +174,7 @@ impl<'a> Exp<'a> {
     pub fn eval(&self, ctx: &mut Ctx) -> bool {
         ctx.stack.clear();
 
-        for op in &self.exp {
+        for op in &self.ops {
             match op {
                 Op::Var(var) => ctx
                     .stack
@@ -213,7 +214,7 @@ impl<'a> fmt::Display for Exp<'a> {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut stack: SmallVec<[Cow<'a, str>; 16]> = SmallVec::new();
-        for op in &self.exp {
+        for op in &self.ops {
             match op {
                 Op::Var(var) => stack.push(Cow::borrowed(var)),
                 Op::And => {
@@ -252,7 +253,7 @@ mod tests {
     fn to_string() {
         fn to_string(exp: &[Op]) -> String {
             let mut text = String::default();
-            write!(text, "{}", Exp { exp: exp.into() }).expect("malformed expression");
+            write!(text, "{}", Exp { ops: exp.into() }).expect("malformed expression");
             text
         }
 
@@ -292,7 +293,7 @@ mod tests {
     #[test]
     fn parse() {
         fn test(exp: &[Op]) {
-            let input = Exp { exp: exp.into() };
+            let input = Exp { ops: exp.into() };
             let mut text = String::default();
             write!(text, "{}", input).expect("malformed expression");
             assert_eq!(Exp::from_str(&text), input);
