@@ -93,10 +93,10 @@ impl<'a> Exp<'a> {
                 }
             }
 
-            if token == "(" {
+            if ch == b'(' {
                 token_ptr = ptr; // accept the token
                 stack.push(token);
-            } else if token == ")" {
+            } else if ch == b')' {
                 token_ptr = ptr; // accept the token
                 while let Some(val) = stack.last().copied() {
                     if val == "(" {
@@ -115,6 +115,7 @@ impl<'a> Exp<'a> {
 
                     if let Some(j) = OPERATORS.iter().position(|&r| r == *stack.last().unwrap()) {
                         if i <= j {
+                            // todo: infer based on `j`
                             output.push(Op::from_str(stack.pop().unwrap()));
                             continue;
                         }
@@ -130,7 +131,8 @@ impl<'a> Exp<'a> {
                     // fetch the next char
                     // safety:  ptr is within `str`, bounds
                     let ch = unsafe { *ptr };
-                    if BREAK.binary_search(&ch).is_err() {
+                    // note: binary search is slow here
+                    if BREAK.iter().position(|&r| r == ch).is_none() {
                         // continue appending more chars
                         continue;
                     }
