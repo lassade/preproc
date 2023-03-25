@@ -6,19 +6,20 @@ use std::{
     str::{self},
 };
 
-use ahash::AHashSet;
 use chars::Chars;
 use codespan_reporting::diagnostic::{Diagnostic, Label};
+use hashbrown::HashSet;
 use simdutf8::basic::from_utf8;
 
 mod chars;
+mod sse2;
 
 type Result<T> = core::result::Result<T, Diagnostic<usize>>;
 
 #[derive(Default)]
 pub struct PP {
     search_paths: Vec<PathBuf>,
-    defines: AHashSet<String>,
+    defines: HashSet<String>,
 }
 
 impl PP {
