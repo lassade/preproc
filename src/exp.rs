@@ -1,3 +1,8 @@
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::*;
+
 // todo: change to alloc
 use core::fmt;
 
@@ -15,14 +20,11 @@ pub enum Op<'a> {
 }
 
 impl<'a> Op<'a> {
-    pub fn from_str(op: &'a str) -> Self {
-        match op {
-            "&&" => Op::And,
-            "||" => Op::Or,
-            "!" => Op::Not,
-            var => Op::Var(var),
-        }
-    }
+    /// Operators tokens, mathc the order of [`OPERATORS`](Self::OPERATORS)
+    pub const TOKENS: &'static [&'static str] = &["&&", "||", "!"];
+
+    /// Supported operators, the slice order gives the precedence
+    pub const OPERATORS: &'static [Op<'static>] = &[Op::And, Op::Or, Op::Not];
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -36,11 +38,8 @@ const unsafe fn str_from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a str {
     core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
 }
 
-/// Supported operators, the slice order gives the precedence
-const OPERATORS: &'static [&'static str] = &["&&", "||", "!"];
-
-/// Break chars, must be sorted
-const BREAK: &'static [u8] = &[b'\t', b' ', b'!', b'&', b'(', b')', b'|'];
+// /// Break chars, must be sorted
+// const BREAK: &'static [u8] = &[b'\t', b' ', b'!', b'&', b'(', b')', b'|'];
 
 /// Expression, internally it uses the Reverse Polish Notation (RPN) notation
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -54,13 +53,34 @@ impl<'a> Exp<'a> {
         // uses the shunting yard algorithm
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
 
-        let mut stack: SmallVec<[&'a str; 16]> = SmallVec::new();
-        let mut output = vec![];
+        let mut stack: SmallVec<[Option<Op<'a>>; 8]> = SmallVec::new();
+        let mut ops = vec![];
 
         let data = exp.as_bytes();
         let mut ptr = data.as_ptr();
         let mut token_ptr = ptr;
         let ptr_end = unsafe { ptr.add(data.len()) };
+
+        let break_ch = unsafe {
+            _mm_set_epi8(
+                b'\t' as i8,
+                b' ' as i8,
+                b'!' as i8,
+                b'&' as i8,
+                b'(' as i8,
+                b')' as i8,
+                b'|' as i8,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        };
 
         loop {
             if ptr >= ptr_end {
@@ -78,80 +98,122 @@ impl<'a> Exp<'a> {
                 continue;
             }
 
+            if ch == b' ' || ch == b'\t' {
+                // accept and skip spaces
+                token_ptr = ptr;
+                continue;
+            }
+
+            if ch == b'(' {
+                token_ptr = ptr; // accept the token
+                stack.push(None);
+                continue;
+            }
+
+            if ch == b')' {
+                token_ptr = ptr; // accept the token
+                while let Some(val) = stack.last().copied() {
+                    if val.is_none() {
+                        stack.pop();
+                        break;
+                    } else {
+                        ops.push(stack.pop().unwrap().unwrap());
+                    }
+                }
+                continue;
+            }
+
             // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
             let token =
                 unsafe { str_from_raw_parts(token_ptr, ptr.offset_from(token_ptr) as usize) };
 
             if token.len() == 1 {
-                if ch == b' ' || ch == b'\t' {
-                    // accept and skip whitespace tokens
-                    token_ptr = ptr;
-                    continue;
-                } else if ch == b'&' || ch == b'|' {
+                if ch == b'&' || ch == b'|' {
                     // just don't accept these as tokens
                     continue;
                 }
             }
 
-            if ch == b'(' {
-                token_ptr = ptr; // accept the token
-                stack.push(token);
-            } else if ch == b')' {
-                token_ptr = ptr; // accept the token
-                while let Some(val) = stack.last().copied() {
-                    if val == "(" {
-                        stack.pop();
-                        break;
-                    } else {
-                        output.push(Op::from_str(stack.pop().unwrap()));
-                    }
-                }
-            } else if let Some(i) = OPERATORS.iter().position(|&r| r == token) {
+            if let Some(i) = Op::TOKENS.iter().position(|&r| r == token) {
                 token_ptr = ptr; // accept the token
                 loop {
-                    if stack.is_empty() {
-                        break;
-                    }
-
-                    if let Some(j) = OPERATORS.iter().position(|&r| r == *stack.last().unwrap()) {
+                    if let Some(Some(op)) = stack.last() {
+                        // a bit faster than looking into the `Op::OPERATORS` array
+                        let j = match op {
+                            Op::And => 0,
+                            Op::Or => 1,
+                            Op::Not => 2,
+                            _ => break,
+                        };
                         if i <= j {
-                            // todo: infer based on `j`
-                            output.push(Op::from_str(stack.pop().unwrap()));
+                            ops.push(*op);
+                            stack.pop();
                             continue;
                         }
                     }
-
                     break;
                 }
-                stack.push(token);
-            } else {
+                stack.push(Some(unsafe { *Op::OPERATORS.get_unchecked(i) }));
+                continue;
+            }
+
+            // fast path for variable appending
+            loop {
                 if ptr >= ptr_end {
                     // accept the token
                 } else {
                     // fetch the next char
-                    // safety:  ptr is within `str`, bounds
-                    let ch = unsafe { *ptr };
-                    // note: binary search is slow here
-                    if BREAK.iter().position(|&r| r == ch).is_none() {
-                        // continue appending more chars
+                    // safety: ptr is within `str`, bounds
+                    let ch;
+                    unsafe {
+                        ch = *ptr;
+                        ptr = ptr.add(1);
+                    }
+
+                    // only process ascii chars
+                    if ch > 127 {
                         continue;
+                    }
+
+                    unsafe {
+                        if (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch))
+                            & 0b1111_1110_0000_0000)
+                            == 0
+                        {
+                            // continue appending more chars
+                            continue;
+                        }
+                    }
+
+                    // // note: binary search is slow here
+                    // if BREAK.iter().position(|&r| r == ch).is_none() {
+                    //     // continue appending more chars
+                    //     continue;
+                    // }
+
+                    // todo: kinda dumb
+                    unsafe {
+                        ptr = ptr.sub(1);
                     }
                 }
 
+                // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
+                let token =
+                    unsafe { str_from_raw_parts(token_ptr, ptr.offset_from(token_ptr) as usize) };
+                ops.push(Op::Var(token));
+
                 token_ptr = ptr; // accept the token
-                output.push(Op::from_str(token));
+                break;
             }
         }
 
         while let Some(token) = stack.pop() {
-            if token == "(" {
-                continue;
+            if let Some(token) = token {
+                ops.push(token);
             }
-
-            output.push(Op::from_str(token));
         }
 
-        Self { ops: output }
+        Self { ops }
     }
 
     #[inline(always)]
