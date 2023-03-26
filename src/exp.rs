@@ -54,7 +54,7 @@ impl<'a> Exp<'a> {
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
 
         let mut stack: SmallVec<[Option<Op<'a>>; 8]> = SmallVec::new();
-        let mut ops = vec![];
+        let mut ops = Vec::with_capacity(8);
 
         let data = exp.as_bytes();
         let mut ptr = data.as_ptr();
