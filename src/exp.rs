@@ -93,8 +93,8 @@ impl<'a> Exp<'a> {
                 ptr = ptr.add(1);
             }
 
-            // only process ascii chars
-            if ch > 127 {
+            // just append utf8 continuation bits
+            if (ch & 0b1100_0000) == 0b1000_0000 {
                 continue;
             }
 
@@ -170,8 +170,8 @@ impl<'a> Exp<'a> {
                         ptr = ptr.add(1);
                     }
 
-                    // only process ascii chars
-                    if ch > 127 {
+                    // just append utf8 continuation bits
+                    if (ch & 0b1100_0000) == 0b1000_0000 {
                         continue;
                     }
 
@@ -380,6 +380,33 @@ mod tests {
             Op::Not,
             Op::And,
             Op::Var("a"),
+            Op::Or,
+        ]);
+
+        // testing utf8 support
+
+        test(&[
+            Op::Var("منزل"),
+            Op::Var("دجاجة"),
+            Op::Not,
+            Op::And,
+            Op::Var("جرو"),
+            Op::Or,
+        ]);
+        test(&[
+            Op::Var("猴"),
+            Op::Var("小狗"),
+            Op::Not,
+            Op::And,
+            Op::Var("房子"),
+            Op::Or,
+        ]);
+        test(&[
+            Op::Var("Будинок"),
+            Op::Var("щеня"),
+            Op::Not,
+            Op::And,
+            Op::Var("клавіатура"),
             Op::Or,
         ]);
 
