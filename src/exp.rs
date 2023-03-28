@@ -63,13 +63,6 @@ impl<'a> Exp<'a> {
 
         let break_ch = unsafe {
             _mm_set_epi8(
-                b'\t' as i8,
-                b' ' as i8,
-                b'!' as i8,
-                b'&' as i8,
-                b'(' as i8,
-                b')' as i8,
-                b'|' as i8,
                 0,
                 0,
                 0,
@@ -78,7 +71,14 @@ impl<'a> Exp<'a> {
                 0,
                 0,
                 0,
-                0,
+                0,           // 7
+                b'\t' as i8, // 6
+                b' ' as i8,  // 5
+                b'!' as i8,  // 4
+                b'&' as i8,  // 3
+                b'(' as i8,  // 2
+                b')' as i8,  // 1
+                b'|' as i8,  // 0
             )
         };
 
@@ -93,24 +93,24 @@ impl<'a> Exp<'a> {
                 ptr = ptr.add(1);
             }
 
-            // just append utf8 continuation bits
-            if (ch & 0b1100_0000) == 0b1000_0000 {
-                continue;
-            }
+            let break_mask =
+                unsafe { _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch)) };
 
-            if ch == b' ' || ch == b'\t' {
+            // doesn't need to check for utf8 continuation bits, because they will be handled in the variable section
+
+            if break_mask & 0b0110_0000 != 0 {
                 // accept and skip spaces
                 token_ptr = ptr;
                 continue;
             }
 
-            if ch == b'(' {
+            if break_mask & 0b0000_0100 != 0 {
                 token_ptr = ptr; // accept the token
                 stack.push(None);
                 continue;
             }
 
-            if ch == b')' {
+            if break_mask & 0b0000_0010 != 0 {
                 token_ptr = ptr; // accept the token
                 while let Some(val) = stack.last().copied() {
                     if val.is_none() {
@@ -128,7 +128,7 @@ impl<'a> Exp<'a> {
                 unsafe { str_from_raw_parts(token_ptr, ptr.offset_from(token_ptr) as usize) };
 
             if token.len() == 1 {
-                if ch == b'&' || ch == b'|' {
+                if break_mask & 0b0000_1001 != 0 {
                     // just don't accept these as tokens
                     continue;
                 }
@@ -162,38 +162,44 @@ impl<'a> Exp<'a> {
                 if ptr >= ptr_end {
                     // accept the token
                 } else {
-                    // fetch the next char
-                    // safety: ptr is within `str`, bounds
-                    let ch;
-                    unsafe {
-                        ch = *ptr;
-                        ptr = ptr.add(1);
-                    }
-
-                    // just append utf8 continuation bits
-                    if (ch & 0b1100_0000) == 0b1000_0000 {
-                        continue;
-                    }
-
-                    unsafe {
-                        if (_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch))
-                            & 0b1111_1110_0000_0000)
-                            == 0
-                        {
-                            // continue appending more chars
-                            continue;
+                    // not very good vor short variable names
+                    // ignore spaces
+                    let break_mask = unsafe {
+                        let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
+                        _mm_movemask_epi8(_mm_or_si128(
+                            _mm_or_si128(
+                                _mm_or_si128(
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b' ' as i8)),
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\t' as i8)),
+                                ),
+                                _mm_or_si128(
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'!' as i8)),
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'&' as i8)),
+                                ),
+                            ),
+                            _mm_or_si128(
+                                _mm_or_si128(
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'(' as i8)),
+                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b')' as i8)),
+                                ),
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'|' as i8)),
+                            ),
+                        )) // 13 + 3 cycles
+                    };
+                    if break_mask != 0 {
+                        // found something
+                        let break_offset = break_mask.trailing_zeros() as usize;
+                        if break_offset > 0 {
+                            // out of bounds check
+                            ptr = unsafe { ptr.add(break_offset) };
+                            if ptr > ptr_end {
+                                ptr = ptr_end;
+                            }
+                            // accept the token
                         }
-                    }
-
-                    // // note: binary search is slow here
-                    // if BREAK.iter().position(|&r| r == ch).is_none() {
-                    //     // continue appending more chars
-                    //     continue;
-                    // }
-
-                    // todo: kinda dumb
-                    unsafe {
-                        ptr = ptr.sub(1);
+                    } else {
+                        ptr = unsafe { ptr.add(16) };
+                        continue;
                     }
                 }
 
