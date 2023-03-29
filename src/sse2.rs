@@ -7,7 +7,7 @@ use core::arch::x86_64::*;
 
 use crate::{
     exp::{Exp, Op},
-    str_from_range, str_from_raw_parts, Config, File, Line, Val,
+    str_from_range, str_from_raw_parts, Config, Line,
 };
 
 const MASK: [i32; 17] = {
@@ -89,11 +89,9 @@ unsafe fn ignore_space(chunk: __m128i) -> i32 {
     !next_space(chunk)
 }
 
-pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
-    let mut file = File::default();
-
+pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(Line<'a>)) {
     if input.is_empty() {
-        return file;
+        return;
     }
 
     let data = input.as_bytes();
@@ -107,8 +105,10 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
     'main: loop {
         unsafe {
             if ptr >= ptr_end {
-                return file;
+                return;
             }
+
+            // todo: '\r' must be striped
 
             let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
             let space_mask = ignore_space(chunk); // fixme: doesn't account for the fact that and space might alreadt
@@ -119,7 +119,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
                 // out of bounds check
                 ptr = ptr.add(space_offset);
                 if ptr >= ptr_end {
-                    return file;
+                    return;
                 }
 
                 // todo: multiline comments
@@ -132,10 +132,9 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
 
                     loop {
                         if ptr >= ptr_end {
-                            // todo: empty directive ???
-                            // todo: end of directive
-
-                            return file;
+                            // empty directive
+                            (f)(Line::Directive(str_from_raw_parts(ptr_end, 0), None));
+                            return;
                         }
 
                         let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
@@ -151,16 +150,15 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
 
                                 // push directive
                                 let dir_name = str_from_range(dir_ptr, ptr);
-                                file.lines.push(Line::Directive(dir_name, None));
-
-                                return file;
+                                (f)(Line::Directive(dir_name, None));
+                                return;
                             }
 
                             let ch = *ptr;
                             if ch == b'\n' {
                                 // push directive
                                 let dir_name = str_from_range(dir_ptr, ptr);
-                                file.lines.push(Line::Directive(dir_name, None));
+                                (f)(Line::Directive(dir_name, None));
 
                                 ptr = ptr.add(1); // skip the newline
                                 line_ptr = ptr;
@@ -182,12 +180,12 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
 
                     ptr = ptr.add(1); // skip the space
 
-                    // todo: simd might not be needed in where because isn't expected mutch more than a single space
+                    // todo: SIMD might not be needed in where because isn't expected mutch more than a single space
                     // ignore empty spaces
                     loop {
                         if ptr >= ptr_end {
-                            file.lines.push(Line::Directive(dir_name, None));
-                            return file;
+                            (f)(Line::Directive(dir_name, None));
+                            return;
                         }
 
                         if *ptr == b' ' || *ptr == b'\t' {
@@ -221,8 +219,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
 
                             // push directive with argument
                             let dir_arg = str_from_range(dir_ptr, ptr);
-                            file.lines
-                                .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
+                            (f)(Line::Directive(dir_name, Some(dir_arg)));
 
                             ptr = ptr.add(1); // skip the newline
                             line_ptr = ptr;
@@ -236,24 +233,22 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
 
                                 // push the directive
                                 let dir_arg = str_from_range(dir_ptr, ptr);
-                                file.lines
-                                    .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
-                                return file;
+                                (f)(Line::Directive(dir_name, Some(dir_arg)));
+                                return;
                             }
                         }
                     }
                 } else if ch == b'\n' {
                     // empty line
-                    file.lines.push(Line::Code(str_from_raw_parts(line_ptr, 0)));
+                    (f)(Line::Code(str_from_raw_parts(line_ptr, 0)));
                     ptr = ptr.add(1);
                     line_ptr = ptr;
                 } else {
                     // line
                     loop {
                         if ptr >= ptr_end {
-                            file.lines
-                                .push(Line::Code(str_from_range(line_ptr, ptr_end)));
-                            return file;
+                            (f)(Line::Code(str_from_range(line_ptr, ptr_end)));
+                            return;
                         }
 
                         let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
@@ -265,12 +260,11 @@ pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
                             // out of bounds check
                             ptr = ptr.add(enter_offset);
                             if ptr >= ptr_end {
-                                file.lines
-                                    .push(Line::Code(str_from_range(line_ptr, ptr_end)));
-                                return file;
+                                (f)(Line::Code(str_from_range(line_ptr, ptr_end)));
+                                return;
                             }
 
-                            file.lines.push(Line::Code(str_from_range(line_ptr, ptr)));
+                            (f)(Line::Code(str_from_range(line_ptr, ptr)));
 
                             ptr = ptr.add(1);
                             line_ptr = ptr;
@@ -319,8 +313,10 @@ mod tests {
         }
 
         let config = Config::default();
+        let mut parsed_lines = vec![];
+        parse_file(&text, &config, |line| parsed_lines.push(line));
 
-        assert_eq!(parse_file(&text, &config).lines, lines, "{}", &text);
+        assert_eq!(parsed_lines, lines, "{}", &text);
     }
 
     #[test]
@@ -347,7 +343,7 @@ mod tests {
             Line::Code("// some comment"),
             Line::Code(""),
             Line::Code("fn func() -> f32 {"),
-            Line::Directive("if", Some(Val::Raw("SHADOWS"))),
+            Line::Directive("if", Some("SHADOWS")),
             Line::Code("    return 0.0;"),
             Line::Directive("else", None),
             Line::Code("    return 1.0;"),

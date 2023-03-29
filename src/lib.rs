@@ -1,12 +1,8 @@
 //! Handle `#include`, `#if` and `#define` `#undef` directives in any source file
 
-use core::fmt;
-
 mod chars;
 pub mod exp;
 pub mod sse2;
-
-use exp::Exp;
 
 pub struct Config {
     /// Special ASCII character used to define the start of and directive, default is `b'#'`
@@ -30,32 +26,9 @@ impl Default for Config {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Val<'a> {
-    Raw(&'a str), // todo: remove
-    Str(&'a str),
-    Exp(Exp<'a>),
-}
-
-impl<'a> fmt::Display for Val<'a> {
-    #[inline(always)]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Val::Raw(s) => write!(f, "{}", s),
-            Val::Str(path) => write!(f, "\"{}\"", path),
-            Val::Exp(exp) => write!(f, "{}", exp),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
 pub enum Line<'a> {
     Code(&'a str),
-    Directive(&'a str, Option<Val<'a>>),
-}
-
-#[derive(Default)]
-pub struct File<'a> {
-    pub lines: Vec<Line<'a>>,
+    Directive(&'a str, Option<&'a str>),
 }
 
 #[inline(always)]

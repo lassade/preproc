@@ -2,7 +2,7 @@ use std::{hint::black_box, io::Write, path::Path};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
-use preproc::{sse2::parse_file, Config};
+use preproc::{sse2, Config};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let files = [
@@ -24,18 +24,21 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let config = Config::default();
 
     for (name, data) in names.zip(data) {
-        let file = parse_file(&data, &config);
         let mut output = std::fs::File::create(format!("benches/files/{}.dbg", name))
             .expect("failed to create output file");
-        for line in &file.lines {
+        sse2::parse_file(&data, &config, |line| {
             writeln!(output, "{:?}", &line).unwrap();
-        }
+        });
 
         let mut group = c.benchmark_group("sse2::parse_file");
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.sample_size(150);
         group.bench_function(name, |c| {
-            c.iter(|| black_box(parse_file(&data, &config)));
+            c.iter(|| {
+                sse2::parse_file(&data, &config, |line| {
+                    black_box(line);
+                })
+            });
         });
     }
 }
