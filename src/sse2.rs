@@ -7,7 +7,7 @@ use core::arch::x86_64::*;
 
 use crate::{
     exp::{Exp, Op},
-    str_from_raw_parts, File, Line, Val,
+    str_from_range, str_from_raw_parts, Config, File, Line, Val,
 };
 
 const MASK: [i32; 17] = {
@@ -89,28 +89,7 @@ unsafe fn ignore_space(chunk: __m128i) -> i32 {
     !next_space(chunk)
 }
 
-pub struct Config<'a> {
-    /// Special ASCII character used to define the start of and directive, default is `b'#'`
-    /// but is possible to configure to something like `b'@'`, `b'%'` or `b'!'`
-    pub special_char: u8,
-    /// Single line comment string, default "//"
-    pub comment: &'a str,
-    // /// Start of a multi-line comment, default "/*"
-    // pub comment_begin: &'a str,
-    // /// End of a multi-line comment, default "*/"
-    // pub comment_end: &'a str,
-}
-
-impl<'a> Default for Config<'a> {
-    fn default() -> Self {
-        Self {
-            special_char: b'#',
-            comment: "//",
-        }
-    }
-}
-
-fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
+pub fn parse_file<'a>(input: &'a str, config: &Config) -> File<'a> {
     let mut file = File::default();
 
     if input.is_empty() {
@@ -160,7 +139,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                         }
 
                         let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
-                        let enter_mask = next_space_or_enter(chunk);
+                        let enter_mask = next_space_or_enter(chunk); // todo: support comments
                         if enter_mask != 0 {
                             // found something
                             let enter_offset = enter_mask.trailing_zeros() as usize;
@@ -171,8 +150,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                                 ptr = ptr_end;
 
                                 // push directive
-                                let dir_name =
-                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                let dir_name = str_from_range(dir_ptr, ptr);
                                 file.lines.push(Line::Directive(dir_name, None));
 
                                 return file;
@@ -181,8 +159,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                             let ch = *ptr;
                             if ch == b'\n' {
                                 // push directive
-                                let dir_name =
-                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                let dir_name = str_from_range(dir_ptr, ptr);
                                 file.lines.push(Line::Directive(dir_name, None));
 
                                 ptr = ptr.add(1); // skip the newline
@@ -201,7 +178,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                     }
 
                     // save the directive name '#' dir_name [dir_arg] ['\n']
-                    let dir_name = str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                    let dir_name = str_from_range(dir_ptr, ptr);
 
                     ptr = ptr.add(1); // skip the space
 
@@ -243,8 +220,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                             }
 
                             // push directive with argument
-                            let dir_arg =
-                                str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                            let dir_arg = str_from_range(dir_ptr, ptr);
                             file.lines
                                 .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
 
@@ -259,8 +235,7 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                                 ptr = ptr_end;
 
                                 // push the directive
-                                let dir_arg =
-                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                let dir_arg = str_from_range(dir_ptr, ptr);
                                 file.lines
                                     .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
                                 return file;
@@ -276,10 +251,8 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                     // line
                     loop {
                         if ptr >= ptr_end {
-                            file.lines.push(Line::Code(str_from_raw_parts(
-                                line_ptr,
-                                ptr_end.offset_from(line_ptr) as _,
-                            )));
+                            file.lines
+                                .push(Line::Code(str_from_range(line_ptr, ptr_end)));
                             return file;
                         }
 
@@ -292,17 +265,12 @@ fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
                             // out of bounds check
                             ptr = ptr.add(enter_offset);
                             if ptr >= ptr_end {
-                                file.lines.push(Line::Code(str_from_raw_parts(
-                                    line_ptr,
-                                    ptr_end.offset_from(line_ptr) as _,
-                                )));
+                                file.lines
+                                    .push(Line::Code(str_from_range(line_ptr, ptr_end)));
                                 return file;
                             }
 
-                            file.lines.push(Line::Code(str_from_raw_parts(
-                                line_ptr,
-                                ptr.offset_from(line_ptr) as _,
-                            )));
+                            file.lines.push(Line::Code(str_from_range(line_ptr, ptr)));
 
                             ptr = ptr.add(1);
                             line_ptr = ptr;
@@ -352,7 +320,7 @@ mod tests {
 
         let config = Config::default();
 
-        assert_eq!(parse(&text, &config).lines, lines, "{}", &text);
+        assert_eq!(parse_file(&text, &config).lines, lines, "{}", &text);
     }
 
     #[test]
