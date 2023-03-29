@@ -10,7 +10,8 @@ use exp::Exp;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Val<'a> {
-    Path(&'a str),
+    Raw(&'a str), // todo: remove
+    Str(&'a str),
     Exp(Exp<'a>),
 }
 
@@ -18,7 +19,8 @@ impl<'a> fmt::Display for Val<'a> {
     #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Val::Path(path) => write!(f, "\"{}\"", path),
+            Val::Raw(s) => write!(f, "{}", s),
+            Val::Str(path) => write!(f, "\"{}\"", path),
             Val::Exp(exp) => write!(f, "{}", exp),
         }
     }
@@ -28,5 +30,14 @@ impl<'a> fmt::Display for Val<'a> {
 pub enum Line<'a> {
     Code(&'a str),
     Directive(&'a str, Option<Val<'a>>),
-    EOF,
+}
+
+#[derive(Default)]
+pub struct File<'a> {
+    pub lines: Vec<Line<'a>>,
+}
+
+#[inline(always)]
+const unsafe fn str_from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a str {
+    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
 }

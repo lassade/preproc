@@ -10,6 +10,8 @@ use beef::Cow;
 use hashbrown::HashMap;
 use smallvec::SmallVec;
 
+use crate::str_from_raw_parts;
+
 /// Operands and Operators
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Op<'a> {
@@ -23,11 +25,6 @@ pub enum Op<'a> {
 pub struct Ctx {
     pub vars: HashMap<String, bool>,
     stack: Vec<bool>,
-}
-
-#[inline(always)]
-const unsafe fn str_from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a str {
-    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
 }
 
 #[derive(Debug)]

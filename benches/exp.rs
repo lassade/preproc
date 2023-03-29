@@ -13,6 +13,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             "long",
             "(!a && b) || (!c && d && e) && (f || (!h && !c) || !(a && b))",
         ),
+        ("bexpr", "Origin && Country && Value && Adults"),
     ];
 
     for (name, exp) in test_cases {

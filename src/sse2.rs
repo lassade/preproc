@@ -7,18 +7,8 @@ use core::arch::x86_64::*;
 
 use crate::{
     exp::{Exp, Op},
-    Line, Val,
+    str_from_raw_parts, File, Line, Val,
 };
-
-#[derive(Default)]
-pub struct File<'a> {
-    lines: Vec<Line<'a>>,
-}
-
-#[inline(always)]
-const unsafe fn str_from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a str {
-    core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
-}
 
 const MASK: [i32; 17] = {
     let mut index = 0;
@@ -99,7 +89,28 @@ unsafe fn ignore_space(chunk: __m128i) -> i32 {
     !next_space(chunk)
 }
 
-fn parse<'a>(input: &'a str) -> File<'a> {
+pub struct Config<'a> {
+    /// Special ASCII character used to define the start of and directive, default is `b'#'`
+    /// but is possible to configure to something like `b'@'`, `b'%'` or `b'!'`
+    pub special_char: u8,
+    /// Single line comment string, default "//"
+    pub comment: &'a str,
+    // /// Start of a multi-line comment, default "/*"
+    // pub comment_begin: &'a str,
+    // /// End of a multi-line comment, default "*/"
+    // pub comment_end: &'a str,
+}
+
+impl<'a> Default for Config<'a> {
+    fn default() -> Self {
+        Self {
+            special_char: b'#',
+            comment: "//",
+        }
+    }
+}
+
+fn parse<'a>(input: &'a str, config: &Config) -> File<'a> {
     let mut file = File::default();
 
     if input.is_empty() {
@@ -114,10 +125,9 @@ fn parse<'a>(input: &'a str) -> File<'a> {
     // todo: keep track the line begin
     let mut line_ptr = ptr;
 
-    loop {
+    'main: loop {
         unsafe {
             if ptr >= ptr_end {
-                file.lines.push(Line::EOF);
                 return file;
             }
 
@@ -130,25 +140,22 @@ fn parse<'a>(input: &'a str) -> File<'a> {
                 // out of bounds check
                 ptr = ptr.add(space_offset);
                 if ptr >= ptr_end {
-                    file.lines.push(Line::EOF);
                     return file;
                 }
 
                 // todo: multiline comments
 
                 let ch = *ptr;
-                // todo: configurable directive char must be a ascii char, like '#' or '@' or '%'
-                if ch == b'#' {
+                if ch == config.special_char {
                     // directive
                     ptr = ptr.add(1);
-                    let directive_ptr = ptr;
+                    let mut dir_ptr = ptr;
 
                     loop {
                         if ptr >= ptr_end {
                             // todo: empty directive ???
                             // todo: end of directive
 
-                            file.lines.push(Line::EOF);
                             return file;
                         }
 
@@ -161,22 +168,31 @@ fn parse<'a>(input: &'a str) -> File<'a> {
                             // out of bounds check
                             ptr = ptr.add(enter_offset);
                             if ptr >= ptr_end {
-                                // todo: end of line
+                                ptr = ptr_end;
 
-                                file.lines.push(Line::EOF);
+                                // push directive
+                                let dir_name =
+                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                file.lines.push(Line::Directive(dir_name, None));
+
                                 return file;
                             }
 
                             let ch = *ptr;
                             if ch == b'\n' {
-                                // todo: if ch is a b'\n' don't execute the next loop break to the 'main loop
-                                // todo: end directive
+                                // push directive
+                                let dir_name =
+                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                file.lines.push(Line::Directive(dir_name, None));
 
                                 ptr = ptr.add(1); // skip the newline
                                 line_ptr = ptr;
-                                break;
+
+                                // execute the next loop break to the 'main loop
+                                continue 'main;
                             } else {
-                                todo!();
+                                // this directive might have an argument, cotinue to the next loop
+                                break;
                             }
                         } else {
                             // keep going
@@ -184,40 +200,73 @@ fn parse<'a>(input: &'a str) -> File<'a> {
                         }
                     }
 
-                    // // directive argument
-                    // loop {
-                    //     if ptr >= ptr_end {
-                    //         // todo: end of directive
+                    // save the directive name '#' dir_name [dir_arg] ['\n']
+                    let dir_name = str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
 
-                    //         file.lines.push(Line::EOF);
-                    //         return file;
-                    //     }
+                    ptr = ptr.add(1); // skip the space
 
-                    //     let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
-                    //     let enter_mask = next_enter(chunk);
-                    //     if enter_mask != 0 {
-                    //         // found something
-                    //         let enter_offset = enter_mask.trailing_zeros() as usize;
+                    // todo: simd might not be needed in where because isn't expected mutch more than a single space
+                    // ignore empty spaces
+                    loop {
+                        if ptr >= ptr_end {
+                            file.lines.push(Line::Directive(dir_name, None));
+                            return file;
+                        }
 
-                    //         // out of bounds check
-                    //         ptr = ptr.add(enter_offset);
-                    //         if ptr >= ptr_end {
-                    //             // todo: end of line
+                        if *ptr == b' ' || *ptr == b'\t' {
+                            ptr = ptr.add(1);
+                        } else {
+                            break;
+                        }
+                    }
 
-                    //             file.lines.push(Line::EOF);
-                    //             return file;
-                    //         }
+                    dir_ptr = ptr;
 
-                    //         // todo: end directive
+                    // the frist time the next loop executes the ptr should be whitin the range
+                    debug_assert!(ptr < ptr_end);
 
-                    //         ptr = ptr.add(2); // skip the newline
-                    //         line_ptr = ptr;
-                    //         break;
-                    //     } else {
-                    //         // keep going
-                    //         ptr = ptr.add(16);
-                    //     }
-                    // }
+                    // directive argument
+                    loop {
+                        let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
+
+                        // todo: support comments
+
+                        let enter_mask = next_enter(chunk);
+                        if enter_mask != 0 {
+                            // found something
+                            let enter_offset = enter_mask.trailing_zeros() as usize;
+
+                            // out of bounds check
+                            ptr = ptr.add(enter_offset);
+                            if ptr >= ptr_end {
+                                ptr = ptr_end;
+                            }
+
+                            // push directive with argument
+                            let dir_arg =
+                                str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                            file.lines
+                                .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
+
+                            ptr = ptr.add(1); // skip the newline
+                            line_ptr = ptr;
+                            break;
+                        } else {
+                            // keep going
+                            ptr = ptr.add(16);
+
+                            if ptr >= ptr_end {
+                                ptr = ptr_end;
+
+                                // push the directive
+                                let dir_arg =
+                                    str_from_raw_parts(dir_ptr, ptr.offset_from(dir_ptr) as usize);
+                                file.lines
+                                    .push(Line::Directive(dir_name, Some(Val::Raw(dir_arg))));
+                                return file;
+                            }
+                        }
+                    }
                 } else if ch == b'\n' {
                     // empty line
                     file.lines.push(Line::Code(str_from_raw_parts(line_ptr, 0)));
@@ -231,7 +280,6 @@ fn parse<'a>(input: &'a str) -> File<'a> {
                                 line_ptr,
                                 ptr_end.offset_from(line_ptr) as _,
                             )));
-                            file.lines.push(Line::EOF);
                             return file;
                         }
 
@@ -248,7 +296,6 @@ fn parse<'a>(input: &'a str) -> File<'a> {
                                     line_ptr,
                                     ptr_end.offset_from(line_ptr) as _,
                                 )));
-                                file.lines.push(Line::EOF);
                                 return file;
                             }
 
@@ -296,7 +343,6 @@ mod tests {
                         write!(text, "{}", exp).expect("invalid directive expression");
                     }
                 }
-                Line::EOF => break,
             }
 
             if i < lines.len() - 1 {
@@ -304,7 +350,9 @@ mod tests {
             }
         }
 
-        assert_eq!(parse(&text).lines, lines, "{}", &text);
+        let config = Config::default();
+
+        assert_eq!(parse(&text, &config).lines, lines, "{}", &text);
     }
 
     #[test]
@@ -315,7 +363,6 @@ mod tests {
             Line::Code("fn func() -> f32 {"),
             Line::Code("    return 1.0;"),
             Line::Code("}"),
-            Line::EOF,
         ]);
         test(&[
             Line::Code("// some comment\r"),
@@ -323,23 +370,21 @@ mod tests {
             Line::Code("fn func() -> f32 {\r"),
             Line::Code("    return 1.0;\r"),
             Line::Code("}\r"),
-            Line::EOF,
         ]);
     }
 
-    // #[test]
-    // fn ifelse() {
-    //     test(&[
-    //         Line::Code("// some comment"),
-    //         Line::Code(""),
-    //         Line::Code("fn func() -> f32 {"),
-    //         Line::Directive("    #if SHADOWS", vec![]),
-    //         Line::Code("    return 0.0;"),
-    //         Line::Directive("    #else", vec![]),
-    //         Line::Code("    return 1.0;"),
-    //         Line::Directive("    #endif", vec![]),
-    //         Line::Code("}"),
-    //         Line::EOF,
-    //     ]);
-    // }
+    #[test]
+    fn ifelse() {
+        test(&[
+            Line::Code("// some comment"),
+            Line::Code(""),
+            Line::Code("fn func() -> f32 {"),
+            Line::Directive("if", Some(Val::Raw("SHADOWS"))),
+            Line::Code("    return 0.0;"),
+            Line::Directive("else", None),
+            Line::Code("    return 1.0;"),
+            Line::Directive("endif", None),
+            Line::Code("}"),
+        ]);
+    }
 }
