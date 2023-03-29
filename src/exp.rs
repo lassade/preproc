@@ -53,8 +53,17 @@ impl<'a> Exp<'a> {
         // uses the shunting yard algorithm
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
 
-        let mut stack: SmallVec<[Option<Op<'a>>; 8]> = SmallVec::new();
-        let mut ops = Vec::with_capacity(8);
+        #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+        pub enum Token {
+            And = 0,
+            Or = 1,
+            Not = 2,
+            Noop,
+            LParen,
+        }
+
+        let mut stack: SmallVec<[Token; 16]> = SmallVec::new();
+        let mut ops = Vec::with_capacity(16);
 
         let data = exp.as_bytes();
         let mut ptr = data.as_ptr();
@@ -93,68 +102,75 @@ impl<'a> Exp<'a> {
                 ptr = ptr.add(1);
             }
 
+            // doesn't need to check for utf8 continuation bits, because they will be handled in the variable section
+
             let break_mask =
                 unsafe { _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch)) };
 
-            // doesn't need to check for utf8 continuation bits, because they will be handled in the variable section
-
-            if break_mask & 0b0110_0000 != 0 {
-                // accept and skip spaces
-                token_ptr = ptr;
-                continue;
-            }
-
-            if break_mask & 0b0000_0100 != 0 {
-                token_ptr = ptr; // accept the token
-                stack.push(None);
-                continue;
-            }
-
-            if break_mask & 0b0000_0010 != 0 {
-                token_ptr = ptr; // accept the token
-                while let Some(val) = stack.last().copied() {
-                    if val.is_none() {
-                        stack.pop();
-                        break;
-                    } else {
-                        ops.push(stack.pop().unwrap().unwrap());
-                    }
-                }
-                continue;
-            }
-
-            // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
-            let token =
-                unsafe { str_from_raw_parts(token_ptr, ptr.offset_from(token_ptr) as usize) };
-
-            if token.len() == 1 {
-                if break_mask & 0b0000_1001 != 0 {
-                    // just don't accept these as tokens
+            if break_mask != 0 {
+                if break_mask & 0b0110_0000 != 0 {
+                    // accept and skip spaces
+                    token_ptr = ptr;
                     continue;
                 }
-            }
 
-            if let Some(i) = Op::TOKENS.iter().position(|&r| r == token) {
-                token_ptr = ptr; // accept the token
-                loop {
-                    if let Some(Some(op)) = stack.last() {
-                        // a bit faster than looking into the `Op::OPERATORS` array
-                        let j = match op {
-                            Op::And => 0,
-                            Op::Or => 1,
-                            Op::Not => 2,
-                            _ => break,
-                        };
-                        if i <= j {
-                            ops.push(*op);
-                            stack.pop();
-                            continue;
+                if break_mask & 0b0000_0100 != 0 {
+                    token_ptr = ptr; // accept the token
+                    stack.push(Token::LParen);
+                    continue;
+                }
+
+                if break_mask & 0b0000_0010 != 0 {
+                    token_ptr = ptr; // accept the token
+                    while let Some(o) = stack.pop() {
+                        if o != Token::LParen {
+                            ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
+                        } else {
+                            break;
                         }
                     }
-                    break;
+                    continue;
                 }
-                stack.push(Some(unsafe { *Op::OPERATORS.get_unchecked(i) }));
-                continue;
+
+                let op;
+                if break_mask & 0b0000_1000 != 0 {
+                    // and
+                    if ptr >= ptr_end || unsafe { *ptr } != b'&' {
+                        panic!("expecting `&&`");
+                    }
+                    ptr = unsafe { ptr.add(1) };
+                    op = Token::And;
+                } else if break_mask & 0b0000_0001 != 0 {
+                    // or
+                    if ptr >= ptr_end || unsafe { *ptr } != b'|' {
+                        panic!("expecting `||`");
+                    }
+                    ptr = unsafe { ptr.add(1) };
+                    op = Token::Or;
+                } else if break_mask & 0b0001_0000 != 0 {
+                    // not
+                    op = Token::Not;
+                } else {
+                    op = Token::Noop;
+                }
+                if op != Token::Noop {
+                    token_ptr = ptr; // accept the token
+                    loop {
+                        if let Some(&o) = stack.last() {
+                            if o == Token::LParen {
+                                break;
+                            }
+                            if op <= o {
+                                ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
+                                stack.pop();
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    stack.push(op);
+                    continue;
+                }
             }
 
             // fast path for variable appending
@@ -213,9 +229,9 @@ impl<'a> Exp<'a> {
             }
         }
 
-        while let Some(token) = stack.pop() {
-            if let Some(token) = token {
-                ops.push(token);
+        while let Some(o) = stack.pop() {
+            if o != Token::LParen {
+                ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
             }
         }
 
@@ -431,7 +447,7 @@ mod tests {
         assert_eq!(to_string(" !\ta    "), "!(a)");
         assert_eq!(to_string(" !\ta  \t "), "!(a)");
 
-        assert_eq!(to_string("|b&&&a"), "(|b && &a)");
+        //assert_eq!(to_string("|b&&&a"), "(|b && &a)"); // not supported
         assert_eq!(to_string("b||a"), "(b || a)");
         assert_eq!(
             to_string("some_big$string@||!other_value023"),
