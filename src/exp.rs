@@ -65,9 +65,8 @@ impl<'a> Exp<'a> {
         let mut ops = Vec::with_capacity(16);
 
         let data = exp.as_bytes();
-        let mut ptr = data.as_ptr();
-        let mut token_ptr = ptr;
-        let ptr_end = unsafe { ptr.add(data.len()) };
+        let mut offset = 0;
+        let mut token_offset = 0;
 
         let break_ch = unsafe {
             _mm_set_epi8(
@@ -91,15 +90,12 @@ impl<'a> Exp<'a> {
         };
 
         loop {
-            if ptr >= ptr_end {
+            if offset >= data.len() {
                 break;
             }
 
-            let ch;
-            unsafe {
-                ch = *ptr;
-                ptr = ptr.add(1);
-            }
+            let ch = unsafe { *data.get_unchecked(offset) };
+            offset += 1;
 
             // doesn't need to check for utf8 continuation bits, because they will be handled in the variable section
 
@@ -108,19 +104,19 @@ impl<'a> Exp<'a> {
 
             if break_mask != 0 {
                 if break_mask & 0b1111_1111_1110_0000 != 0 {
-                    // accept and skip spaces,
-                    token_ptr = ptr;
+                    // accept and skip
+                    token_offset = offset;
                     continue;
                 }
 
                 if break_mask & 0b0000_0100 != 0 {
-                    token_ptr = ptr; // accept the token
+                    token_offset = offset; // accept the token
                     stack.push(Token::LParen);
                     continue;
                 }
 
                 if break_mask & 0b0000_0010 != 0 {
-                    token_ptr = ptr; // accept the token
+                    token_offset = offset; // accept the token
                     loop {
                         if let Some(o) = stack.pop() {
                             if o != Token::LParen {
@@ -130,7 +126,7 @@ impl<'a> Exp<'a> {
                             }
                         } else {
                             return Err(Error {
-                                offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                                offset: offset - 1,
                                 len: 1,
                                 message: Cow::borrowed("unmached `)`"),
                             });
@@ -142,25 +138,25 @@ impl<'a> Exp<'a> {
                 let op0;
                 if break_mask & 0b0000_1000 != 0 {
                     // and
-                    if ptr >= ptr_end || unsafe { *ptr } != b'&' {
+                    if offset >= data.len() || unsafe { *data.get_unchecked(offset) } != b'&' {
                         return Err(Error {
-                            offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                            offset: offset - 1,
                             len: 1,
                             message: Cow::borrowed("expecting `&&`"),
                         });
                     }
-                    ptr = unsafe { ptr.add(1) };
+                    offset += 1;
                     op0 = Token::And;
                 } else if break_mask & 0b0000_0001 != 0 {
                     // or
-                    if ptr >= ptr_end || unsafe { *ptr } != b'|' {
+                    if offset >= data.len() || unsafe { *data.get_unchecked(offset) } != b'|' {
                         return Err(Error {
-                            offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                            offset: offset - 1,
                             len: 1,
                             message: Cow::borrowed("expecting `||`"),
                         });
                     }
-                    ptr = unsafe { ptr.add(1) };
+                    offset += 1;
                     op0 = Token::Or;
                 } else if break_mask & 0b0001_0000 != 0 {
                     // not
@@ -169,7 +165,7 @@ impl<'a> Exp<'a> {
                     op0 = Token::Noop;
                 }
                 if op0 != Token::Noop {
-                    token_ptr = ptr; // accept the token
+                    token_offset = offset; // accept the token
                     loop {
                         let pre0 = unsafe { *PRECEDENCE.get_unchecked(op0 as usize) };
                         if let Some(&op1) = stack.last() {
@@ -192,13 +188,15 @@ impl<'a> Exp<'a> {
 
             // fast path for variable appending
             loop {
-                if ptr >= ptr_end {
+                if offset >= data.len() {
                     // accept the token
                 } else {
                     // not very good vor short variable names
                     // ignore spaces
                     let break_mask = unsafe {
-                        let chunk = _mm_loadu_si128(ptr as *const _); // 6 cycles
+                        let chunk = _mm_loadu_si128(
+                            data.get_unchecked(offset) as *const u8 as *const __m128i
+                        ); // 6 cycles
                         _mm_movemask_epi8(_mm_or_si128(
                             _mm_or_si128(
                                 _mm_or_si128(
@@ -224,24 +222,25 @@ impl<'a> Exp<'a> {
                         let break_offset = break_mask.trailing_zeros() as usize;
                         if break_offset > 0 {
                             // out of bounds check
-                            ptr = unsafe { ptr.add(break_offset) };
-                            if ptr > ptr_end {
-                                ptr = ptr_end;
+                            offset += break_offset;
+                            if offset > data.len() {
+                                offset = data.len();
                             }
                             // accept the token
                         }
                     } else {
-                        ptr = unsafe { ptr.add(16) };
+                        offset += 16;
                         continue;
                     }
                 }
 
                 // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
-                let token =
-                    unsafe { str_from_raw_parts(token_ptr, ptr.offset_from(token_ptr) as usize) };
+                let token = unsafe {
+                    str_from_raw_parts(data.get_unchecked(token_offset), offset - token_offset)
+                };
                 ops.push(Op::Var(token));
 
-                token_ptr = ptr; // accept the token
+                token_offset = offset; // accept the token
                 break;
             }
         }

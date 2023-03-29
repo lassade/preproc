@@ -18,7 +18,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     for (name, exp) in test_cases {
         let mut group = c.benchmark_group("from_str");
         group.throughput(Throughput::Bytes(exp.len() as u64));
-        group.sample_size(50);
+        group.sample_size(150);
         group.bench_function(name, |c| {
             c.iter(|| black_box(Exp::from_str(&exp)));
         });
