@@ -19,14 +19,6 @@ pub enum Op<'a> {
     Not,
 }
 
-impl<'a> Op<'a> {
-    /// Operators tokens, mathc the order of [`OPERATORS`](Self::OPERATORS)
-    pub const TOKENS: &'static [&'static str] = &["&&", "||", "!"];
-
-    /// Supported operators, the slice order gives the precedence
-    pub const OPERATORS: &'static [Op<'static>] = &[Op::And, Op::Or, Op::Not];
-}
-
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Ctx {
     pub vars: HashMap<String, bool>,
@@ -38,8 +30,12 @@ const unsafe fn str_from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a str {
     core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr, len))
 }
 
-// /// Break chars, must be sorted
-// const BREAK: &'static [u8] = &[b'\t', b' ', b'!', b'&', b'(', b')', b'|'];
+#[derive(Debug)]
+pub struct Error {
+    pub offset: usize,
+    pub len: usize,
+    pub message: Cow<'static, str>,
+}
 
 /// Expression, internally it uses the Reverse Polish Notation (RPN) notation
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -48,19 +44,22 @@ pub struct Exp<'a> {
 }
 
 impl<'a> Exp<'a> {
-    // todo: really bad performance
-    pub fn from_str(exp: &'a str) -> Self {
+    pub fn from_str(exp: &'a str) -> Result<Self, Error> {
         // uses the shunting yard algorithm
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
 
         #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
-        pub enum Token {
+        enum Token {
             And = 0,
             Or = 1,
             Not = 2,
             Noop,
             LParen,
         }
+
+        // translate a [`Token`] to a `Op` and precedence
+        const OPERATORS: &'static [Op<'static>] = &[Op::And, Op::Or, Op::Not];
+        const PRECEDENCE: &'static [usize] = &[0, 0, 1];
 
         let mut stack: SmallVec<[Token; 16]> = SmallVec::new();
         let mut ops = Vec::with_capacity(16);
@@ -78,9 +77,9 @@ impl<'a> Exp<'a> {
                 0,
                 0,
                 0,
-                0,
-                0,
-                0,           // 7
+                b'\0' as i8,
+                b'\r' as i8,
+                b'\n' as i8,
                 b'\t' as i8, // 6
                 b' ' as i8,  // 5
                 b'!' as i8,  // 4
@@ -108,8 +107,8 @@ impl<'a> Exp<'a> {
                 unsafe { _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch)) };
 
             if break_mask != 0 {
-                if break_mask & 0b0110_0000 != 0 {
-                    // accept and skip spaces
+                if break_mask & 0b1111_1111_1110_0000 != 0 {
+                    // accept and skip spaces,
                     token_ptr = ptr;
                     continue;
                 }
@@ -122,53 +121,71 @@ impl<'a> Exp<'a> {
 
                 if break_mask & 0b0000_0010 != 0 {
                     token_ptr = ptr; // accept the token
-                    while let Some(o) = stack.pop() {
-                        if o != Token::LParen {
-                            ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
+                    loop {
+                        if let Some(o) = stack.pop() {
+                            if o != Token::LParen {
+                                ops.push(unsafe { *OPERATORS.get_unchecked(o as usize) });
+                            } else {
+                                break;
+                            }
                         } else {
-                            break;
+                            return Err(Error {
+                                offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                                len: 1,
+                                message: Cow::borrowed("unmached `)`"),
+                            });
                         }
                     }
                     continue;
                 }
 
-                let op;
+                let op0;
                 if break_mask & 0b0000_1000 != 0 {
                     // and
                     if ptr >= ptr_end || unsafe { *ptr } != b'&' {
-                        panic!("expecting `&&`");
+                        return Err(Error {
+                            offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                            len: 1,
+                            message: Cow::borrowed("expecting `&&`"),
+                        });
                     }
                     ptr = unsafe { ptr.add(1) };
-                    op = Token::And;
+                    op0 = Token::And;
                 } else if break_mask & 0b0000_0001 != 0 {
                     // or
                     if ptr >= ptr_end || unsafe { *ptr } != b'|' {
-                        panic!("expecting `||`");
+                        return Err(Error {
+                            offset: unsafe { ptr.offset_from(data.as_ptr()) } as usize - 1,
+                            len: 1,
+                            message: Cow::borrowed("expecting `||`"),
+                        });
                     }
                     ptr = unsafe { ptr.add(1) };
-                    op = Token::Or;
+                    op0 = Token::Or;
                 } else if break_mask & 0b0001_0000 != 0 {
                     // not
-                    op = Token::Not;
+                    op0 = Token::Not;
                 } else {
-                    op = Token::Noop;
+                    op0 = Token::Noop;
                 }
-                if op != Token::Noop {
+                if op0 != Token::Noop {
                     token_ptr = ptr; // accept the token
                     loop {
-                        if let Some(&o) = stack.last() {
-                            if o == Token::LParen {
+                        let pre0 = unsafe { *PRECEDENCE.get_unchecked(op0 as usize) };
+                        if let Some(&op1) = stack.last() {
+                            if op1 == Token::LParen {
                                 break;
                             }
-                            if op <= o {
-                                ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
+                            let pre1 = unsafe { *PRECEDENCE.get_unchecked(op1 as usize) };
+                            if pre0 <= pre1 {
+                                ops.push(unsafe { *OPERATORS.get_unchecked(op1 as usize) });
                                 stack.pop();
                                 continue;
                             }
                         }
                         break;
                     }
-                    stack.push(op);
+                    stack.push(op0);
                     continue;
                 }
             }
@@ -230,12 +247,17 @@ impl<'a> Exp<'a> {
         }
 
         while let Some(o) = stack.pop() {
-            if o != Token::LParen {
-                ops.push(unsafe { *Op::OPERATORS.get_unchecked(o as usize) });
+            if o == Token::LParen {
+                return Err(Error {
+                    offset: 0, // todo: position offset
+                    len: 0,
+                    message: Cow::borrowed("unmached `(`"),
+                });
             }
+            ops.push(unsafe { *OPERATORS.get_unchecked(o as usize) });
         }
 
-        Self { ops }
+        Ok(Self { ops })
     }
 
     #[inline(always)]
@@ -382,7 +404,10 @@ mod tests {
             let input = Exp { ops: exp.into() };
             let mut text = String::default();
             write!(text, "{}", input).expect("malformed expression");
-            assert_eq!(Exp::from_str(&text), input);
+            assert_eq!(
+                Exp::from_str(&text).expect("failed to parse expression"),
+                input
+            );
         }
 
         test(&[Op::Var("a"), Op::Not]);
@@ -433,11 +458,16 @@ mod tests {
         ]);
 
         fn to_string(exp: &str) -> String {
-            let exp = Exp::from_str(exp);
+            let exp = Exp::from_str(exp).expect("failed to parse expression");
             let mut text = String::default();
             write!(text, "{}", exp).expect("malformed expression");
             text
         }
+
+        assert_eq!(to_string("b && !a"), "(b && !(a))");
+        assert_eq!(to_string("!b && a"), "(!(b) && a)");
+        assert_eq!(to_string("!b && !a"), "(!(b) && !(a))");
+        assert_eq!(to_string("!b && !a || c"), "((!(b) && !(a)) || c)");
 
         // test some degenerated combinations
 
@@ -447,11 +477,46 @@ mod tests {
         assert_eq!(to_string(" !\ta    "), "!(a)");
         assert_eq!(to_string(" !\ta  \t "), "!(a)");
 
-        //assert_eq!(to_string("|b&&&a"), "(|b && &a)"); // not supported
         assert_eq!(to_string("b||a"), "(b || a)");
         assert_eq!(
             to_string("some_big$string@||!other_value023"),
             "(some_big$string@ || !(other_value023))"
         );
+    }
+
+    #[test]
+    fn malformed() {
+        fn check(exp: &str) {
+            match Exp::from_str(exp) {
+                Ok(val) => panic!(
+                    "malformed expression `{}` was parsed as: `{}` {:?}",
+                    exp, &val, &val.ops
+                ),
+                Err(_) => {}
+            }
+        }
+
+        // unary check
+        check("b && a !");
+        check("b && a !c");
+        check("b || a && c !");
+
+        // missing operators
+        check("||a");
+        check("&&a");
+        check("b || a &&");
+        check("b || a ||");
+
+        check("b & a");
+        check("b | a");
+        check("b || a &");
+        check("b && a |");
+        check("|b&&&a");
+        check("b&&&a");
+
+        check("((b&&a)");
+        check("((b&&a)))");
+        check("((b&&(c||a))))");
+        check("((b&(c||a))))");
     }
 }

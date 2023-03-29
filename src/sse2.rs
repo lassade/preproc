@@ -5,14 +5,10 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::exp::{Exp, Op};
-
-#[derive(Debug, PartialEq, Eq)]
-enum Line<'a> {
-    Code(&'a str),
-    Directive(&'a str, Option<Exp<'a>>),
-    EOF,
-}
+use crate::{
+    exp::{Exp, Op},
+    Line, Val,
+};
 
 #[derive(Default)]
 pub struct File<'a> {
