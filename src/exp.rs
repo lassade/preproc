@@ -61,7 +61,7 @@ impl<'a> Exp<'a> {
         const OPERATORS: &'static [Op<'static>] = &[Op::And, Op::Or, Op::Not];
         const PRECEDENCE: &'static [usize] = &[0, 0, 1];
 
-        let mut stack: SmallVec<[Token; 16]> = SmallVec::new();
+        let mut stack: SmallVec<[(Token, usize); 16]> = SmallVec::new();
         let mut ops = Vec::with_capacity(16);
 
         let data = exp.as_bytes();
@@ -111,16 +111,16 @@ impl<'a> Exp<'a> {
 
                 if break_mask & 0b0000_0100 != 0 {
                     token_offset = offset; // accept the token
-                    stack.push(Token::LParen);
+                    stack.push((Token::LParen, offset));
                     continue;
                 }
 
                 if break_mask & 0b0000_0010 != 0 {
                     token_offset = offset; // accept the token
                     loop {
-                        if let Some(o) = stack.pop() {
-                            if o != Token::LParen {
-                                ops.push(unsafe { *OPERATORS.get_unchecked(o as usize) });
+                        if let Some((token, _)) = stack.pop() {
+                            if token != Token::LParen {
+                                ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
                             } else {
                                 break;
                             }
@@ -168,7 +168,7 @@ impl<'a> Exp<'a> {
                     token_offset = offset; // accept the token
                     loop {
                         let pre0 = unsafe { *PRECEDENCE.get_unchecked(op0 as usize) };
-                        if let Some(&op1) = stack.last() {
+                        if let Some(&(op1, _)) = stack.last() {
                             if op1 == Token::LParen {
                                 break;
                             }
@@ -181,7 +181,7 @@ impl<'a> Exp<'a> {
                         }
                         break;
                     }
-                    stack.push(op0);
+                    stack.push((op0, offset));
                     continue;
                 }
             }
@@ -245,15 +245,15 @@ impl<'a> Exp<'a> {
             }
         }
 
-        while let Some(o) = stack.pop() {
-            if o == Token::LParen {
+        while let Some((token, offset)) = stack.pop() {
+            if token == Token::LParen {
                 return Err(Error {
-                    offset: 0, // todo: position offset
-                    len: 0,
+                    offset: offset - 1,
+                    len: 1,
                     message: Cow::borrowed("unmached `(`"),
                 });
             }
-            ops.push(unsafe { *OPERATORS.get_unchecked(o as usize) });
+            ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
         }
 
         Ok(Self { ops })
