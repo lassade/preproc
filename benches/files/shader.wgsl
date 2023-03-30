@@ -27,7 +27,9 @@ fn rd_srgb(offset: u32) -> vec4<f32> {
 #else
     // blend in srgb space
     return srgb;
-#endif
+
+// the next endif contains an extra spaces
+#endif  
 }
 
 fn rd_vec4f32(offset: u32) -> vec4<f32> {
@@ -84,6 +86,8 @@ struct Vertex {
 #if CLIP_FADE
     @location(5) @interpolate(flat) fade_ss: vec2<f32>,
 #endif
+
+/* Multiline comment is supported but it must be in this form
 #if SDF_MASKING
     // styling
     @location(6) uv_mask: vec2<f32>,
@@ -92,6 +96,18 @@ struct Vertex {
     @location(9) @interpolate(flat) shadow_color: vec4<f32>,
     @location(10) @interpolate(flat) outterglow_color: vec4<f32>,
 #endif
+*/
+
+// Multiline comment is supported bad multiline comment
+/*#if SDF_MASKING
+    // styling
+    @location(6) uv_mask: vec2<f32>,
+    @location(7) @interpolate(flat) style: vec4<f32>, // dilate, stroke, drop shadown, outter glow, inner glow
+    @location(8) @interpolate(flat) stroke_color: vec3<f32>,
+    @location(9) @interpolate(flat) shadow_color: vec4<f32>,
+    @location(10) @interpolate(flat) outterglow_color: vec4<f32>,
+#endif*/
+
     // @location(11) @interpolate(flat) debug: vec4<f32>,
 };
 
@@ -114,14 +130,14 @@ fn build_primitive_vertex(primitive: u32) -> Vertex {
             v.color = rd_srgb(p_offset + 8u);
             let clip_offset = data[p_offset + 9u];
             let clip = rd_vec4f32(clip_offset);
-#if TRANSFORM
+#if TRANSFORM // comment after the end if expression
             var rot = rd_f32(p_offset + 10u);
             let hshear = rd_f32(p_offset + 11u);
             var pivot = rd_vec2f32(p_offset + 12u);
 
             // pivot in screen space
             pivot = pivot * shape_size + shape.xy;
-#endif
+#endif // comment after the endif directive
 
             switch (p_index) {
                 case 0u: { // bottom left

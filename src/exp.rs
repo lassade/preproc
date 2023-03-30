@@ -55,8 +55,8 @@ impl<'a> Exp<'a> {
         }
 
         // translate a [`Token`] to a `Op` and precedence
-        const OPERATORS: &'static [Op<'static>] = &[Op::And, Op::Or, Op::Not];
-        const PRECEDENCE: &'static [usize] = &[0, 0, 1];
+        const OPERATORS: &[Op<'static>] = &[Op::And, Op::Or, Op::Not];
+        const PRECEDENCE: &[usize] = &[0, 0, 1];
 
         let mut stack: SmallVec<[(Token, usize); 16]> = SmallVec::new();
         let mut ops = Vec::with_capacity(16);
