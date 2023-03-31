@@ -1,5 +1,7 @@
 //! Handle `#include`, `#if` and `#define` `#undef` directives in any source file
 
+use core::fmt;
+
 mod chars;
 pub mod exp;
 pub mod sse2;
@@ -10,30 +12,12 @@ pub struct Config {
     /// Special ASCII character used to define the start of and directive, default is `b'#'`
     /// but is possible to configure to something like `b'@'`, `b'%'` or `b'!'`
     pub special_char: u8,
-    // /// Single line comment string, default "//"
-    // pub comment: &'a str,
-    // /// Start of a multi-line comment, default "/*"
-    // pub comment_begin: &'a str,
-    // /// End of a multi-line comment, default "*/"
-    // pub comment_end: &'a str,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self {
-            special_char: b'#',
-            // comment: "//",
-        }
+        Self { special_char: b'#' }
     }
-}
-
-/// Raw lines sent by the
-#[derive(Debug, PartialEq, Eq)]
-pub enum RawLine<'a> {
-    /// A normal line of code
-    Code(&'a str),
-    /// A line of code that starts with a user defined ascii char (usually `b'#'`)
-    Directive(&'a str, Option<&'a str>), // todo: include the entire line as the last argument
 }
 
 #[inline(always)]
@@ -58,6 +42,21 @@ pub enum Line<'a> {
     Endif,
 }
 
+impl<'a> fmt::Display for Line<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Line::Code(line) => write!(f, "{}", line),
+            Line::Inc(path) => write!(f, "#include {}", path),
+            Line::Def(def) => write!(f, "#define {}", def),
+            Line::Undef(def) => write!(f, "#undef {}", def),
+            Line::If(exp) => write!(f, "#if {}", exp),
+            Line::Elif(exp) => write!(f, "#elif {}", exp),
+            Line::Else => write!(f, "#else"),
+            Line::Endif => write!(f, "#endif"),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct File<'a> {
     pub lines: Vec<Line<'a>>,
@@ -66,12 +65,7 @@ pub struct File<'a> {
 impl<'a> File<'a> {
     pub fn from_str(input: &'a str, config: &Config) -> Self {
         let mut file = Self::default();
-        sse2::parse_file(input, config, |line| match line {
-            RawLine::Code(code) => file.lines.push(Line::Code(code)),
-            RawLine::Directive(directive, arg) => {
-                file.lines.push(sse2::parse_directive(directive, arg))
-            }
-        });
+        sse2::parse_file(input, config, |line| file.lines.push(line));
         file
     }
 }

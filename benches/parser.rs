@@ -6,7 +6,7 @@ use preproc::{sse2, Config};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let files = [
-        Path::new("benches/files/Native.g.cs"),
+        //Path::new("benches/files/Native.g.cs"),
         Path::new("benches/files/shader.wgsl"),
     ];
 

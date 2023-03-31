@@ -7,7 +7,7 @@ use core::arch::x86_64::*;
 
 use crate::{
     exp::{Exp, Op},
-    str_from_range, str_from_raw_parts, Config, Line, RawLine,
+    str_from_range, str_from_raw_parts, Config, Line,
 };
 
 const MASK: [i32; 17] = {
@@ -99,7 +99,7 @@ unsafe fn ignore_space(chunk: __m128i) -> i32 {
     !next_space(chunk)
 }
 
-pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine<'a>)) {
+pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(Line<'a>)) {
     if input.is_empty() {
         return;
     }
@@ -109,6 +109,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
     let mut ptr = data.as_ptr();
     let ptr_end = unsafe { ptr.add(data.len()) };
 
+    // todo: keep track line count for proper error handling
     // todo: keep track the line begin
     let mut line_ptr = ptr;
 
@@ -130,18 +131,17 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                     return;
                 }
 
-                // todo: multiline comments
-
                 let ch = *ptr;
                 if ch == config.special_char {
                     // directive
                     ptr = ptr.add(1);
-                    let mut dir_ptr = ptr;
+                    let mut directive_ptr = ptr;
 
                     loop {
                         if ptr >= ptr_end {
                             // empty directive
-                            (f)(RawLine::Directive(str_from_raw_parts(ptr_end, 0), None));
+                            // todo: output as a code line
+                            panic!("empty directive");
                             return;
                         }
 
@@ -154,19 +154,17 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                             // out of bounds check
                             ptr = ptr.add(enter_offset);
                             if ptr >= ptr_end {
-                                ptr = ptr_end;
-
                                 // push directive
-                                let dir_name = line(dir_ptr, ptr);
-                                (f)(RawLine::Directive(dir_name, None));
+                                let name = line(directive_ptr, ptr_end);
+                                (f)(parse_directive(name, None));
                                 return;
                             }
 
                             let ch = *ptr;
                             if ch == b'\n' {
                                 // push directive
-                                let dir_name = line(dir_ptr, ptr);
-                                (f)(RawLine::Directive(dir_name, None));
+                                let name = line(directive_ptr, ptr);
+                                (f)(parse_directive(name, None));
 
                                 ptr = ptr.add(1); // skip '\n'
 
@@ -185,7 +183,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                     }
 
                     // save the directive name '#' dir_name [dir_arg] ['\n']
-                    let dir_name = str_from_range(dir_ptr, ptr);
+                    let name = str_from_range(directive_ptr, ptr);
 
                     ptr = ptr.add(1); // skip the space
 
@@ -193,7 +191,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                     // ignore empty spaces
                     loop {
                         if ptr >= ptr_end {
-                            (f)(RawLine::Directive(dir_name, None));
+                            (f)(parse_directive(name, None));
                             return;
                         }
 
@@ -204,7 +202,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                         }
                     }
 
-                    dir_ptr = ptr;
+                    directive_ptr = ptr;
 
                     // the frist time the next loop executes the ptr should be whitin the range
                     debug_assert!(ptr < ptr_end);
@@ -227,8 +225,8 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                             }
 
                             // push directive with argument
-                            let dir_arg = line(dir_ptr, ptr);
-                            (f)(RawLine::Directive(dir_name, Some(dir_arg)));
+                            let arg = line(directive_ptr, ptr);
+                            (f)(parse_directive(name, Some(arg)));
 
                             ptr = ptr.add(1); // skip '\n'
 
@@ -239,18 +237,16 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                             ptr = ptr.add(16);
 
                             if ptr >= ptr_end {
-                                ptr = ptr_end;
-
                                 // push the directive
-                                let dir_arg = str_from_range(dir_ptr, ptr);
-                                (f)(RawLine::Directive(dir_name, Some(dir_arg)));
+                                let arg = str_from_range(directive_ptr, ptr_end);
+                                (f)(parse_directive(name, Some(arg)));
                                 return;
                             }
                         }
                     }
                 } else if ch == b'\n' {
                     // empty line
-                    (f)(RawLine::Code(str_from_raw_parts(line_ptr, 0)));
+                    (f)(Line::Code(str_from_raw_parts(line_ptr, 0)));
 
                     // skip '\n'
                     ptr = ptr.add(1);
@@ -260,7 +256,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                     // line
                     loop {
                         if ptr >= ptr_end {
-                            (f)(RawLine::Code(line(line_ptr, ptr_end)));
+                            (f)(Line::Code(line(line_ptr, ptr_end)));
                             return;
                         }
 
@@ -273,11 +269,11 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
                             // out of bounds check
                             ptr = ptr.add(enter_offset);
                             if ptr >= ptr_end {
-                                (f)(RawLine::Code(line(line_ptr, ptr_end)));
+                                (f)(Line::Code(line(line_ptr, ptr_end)));
                                 return;
                             }
 
-                            (f)(RawLine::Code(line(line_ptr, ptr)));
+                            (f)(Line::Code(line(line_ptr, ptr)));
 
                             // skip '\n'
                             ptr = ptr.add(1);
@@ -298,7 +294,7 @@ pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(RawLine
     }
 }
 
-pub fn parse_directive<'a>(directive: &'a str, arg: Option<&'a str>) -> Line<'a> {
+fn parse_directive<'a>(name: &'a str, arg: Option<&'a str>) -> Line<'a> {
     #[inline(always)]
     fn cmp(a: __m128i, a_len: usize, b: &str) -> bool {
         if a_len != b.len() {
@@ -314,28 +310,28 @@ pub fn parse_directive<'a>(directive: &'a str, arg: Option<&'a str>) -> Line<'a>
         return (cmp_mask & MASK[b.len()]) == MASK[b.len()];
     }
 
-    if directive.is_empty() {
+    if name.is_empty() {
         panic!("empty directive");
     }
 
-    let a = unsafe { _mm_loadu_si128(directive.as_ptr() as *const _) }; // 6 cycles
-    if cmp(a, directive.len(), "if") {
+    let a = unsafe { _mm_loadu_si128(name.as_ptr() as *const _) }; // 6 cycles
+    if cmp(a, name.len(), "if") {
         Line::If(Exp::from_str(arg.expect("missing `if` expression")).unwrap())
-    } else if cmp(a, directive.len(), "elif") {
+    } else if cmp(a, name.len(), "elif") {
         Line::Elif(Exp::from_str(arg.expect("missing `elif` expression")).unwrap())
-    } else if cmp(a, directive.len(), "else") {
+    } else if cmp(a, name.len(), "else") {
         Line::Else
-    } else if cmp(a, directive.len(), "endif") {
+    } else if cmp(a, name.len(), "endif") {
         Line::Endif
-    } else if cmp(a, directive.len(), "include") {
+    } else if cmp(a, name.len(), "include") {
         Line::Inc(arg.expect("missing `include` directive"))
-    } else if cmp(a, directive.len(), "define") {
+    } else if cmp(a, name.len(), "define") {
         Line::Def(arg.expect("missing `define` directive"))
-    } else if cmp(a, directive.len(), "undef") {
+    } else if cmp(a, name.len(), "undef") {
         Line::Undef(arg.expect("missing `define` directive"))
     } else {
         // todo: unsupported directives should be writen as a line of code
-        panic!("unsupported directive `{}`", directive)
+        panic!("unsupported directive `{}`", name)
     }
 }
 
@@ -345,24 +341,11 @@ mod tests {
 
     use super::*;
 
-    fn test(lines: &[RawLine]) {
+    fn test(lines: &[Line]) {
         let mut text = String::default();
 
         for (i, line) in lines.iter().enumerate() {
-            match line {
-                RawLine::Code(code) => {
-                    text.push_str(code);
-                }
-                RawLine::Directive(d, exp) => {
-                    text.push('#');
-                    text.push_str(d);
-                    if let Some(exp) = exp {
-                        text.push(' ');
-                        write!(text, "{}", exp).expect("invalid directive expression");
-                    }
-                }
-            }
-
+            write!(text, "{}", line);
             if i < lines.len() - 1 {
                 text.push('\n');
             }
@@ -378,26 +361,26 @@ mod tests {
     #[test]
     fn no_directives() {
         test(&[
-            RawLine::Code("// some comment"),
-            RawLine::Code(""),
-            RawLine::Code("fn func() -> f32 {"),
-            RawLine::Code("    return 1.0;"),
-            RawLine::Code("}"),
+            Line::Code("// some comment"),
+            Line::Code(""),
+            Line::Code("fn func() -> f32 {"),
+            Line::Code("    return 1.0;"),
+            Line::Code("}"),
         ]);
     }
 
     #[test]
     fn ifelse() {
         test(&[
-            RawLine::Code("// some comment"),
-            RawLine::Code(""),
-            RawLine::Code("fn func() -> f32 {"),
-            RawLine::Directive("if", Some("SHADOWS")),
-            RawLine::Code("    return 0.0;"),
-            RawLine::Directive("else", None),
-            RawLine::Code("    return 1.0;"),
-            RawLine::Directive("endif", None),
-            RawLine::Code("}"),
+            Line::Code("// some comment"),
+            Line::Code(""),
+            Line::Code("fn func() -> f32 {"),
+            Line::If(Exp::from_str("SHADOWS").unwrap()),
+            Line::Code("    return 0.0;"),
+            Line::Else,
+            Line::Code("    return 1.0;"),
+            Line::Endif,
+            Line::Code("}"),
         ]);
     }
 }
