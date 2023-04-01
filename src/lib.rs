@@ -8,15 +8,34 @@ pub mod sse2;
 
 use exp::Exp;
 
-pub struct Config {
-    /// Special ASCII character used to define the start of and directive, default is `b'#'`
+pub struct Config<'a> {
+    /// Special ASCII character used to define the start of an directive, default is `b'#'`
     /// but is possible to configure to something like `b'@'`, `b'%'` or `b'!'`
     pub special_char: u8,
+    /// Single line comment string, default "//"
+    pub comment: &'a str,
+    // multiline comments are just too problematic
+    // /// Start of a multi-line comment, default "/*"
+    // pub comment_begin: &'a str,
+    // /// End of a multi-line comment, default "*/"
+    // pub comment_end: &'a str,
+    /// Start of a include path, default `b'\"'`
+    pub include_begin: u8,
+    /// Delimiter the end of a include path, default "`b'\"'`, make sure to use a ASCII that
+    /// isn't included in the path it self like `b'>' for instance
+    pub include_end: u8,
 }
 
-impl Default for Config {
+impl<'a> Default for Config<'a> {
     fn default() -> Self {
-        Self { special_char: b'#' }
+        Self {
+            special_char: b'#',
+            comment: "//",
+            // comment_begin: "/*",
+            // comment_end: "*/",
+            include_begin: b'\"',
+            include_end: b'\"',
+        }
     }
 }
 
@@ -33,6 +52,7 @@ const unsafe fn str_from_range<'a>(ptr: *const u8, ptr_end: *const u8) -> &'a st
 #[derive(Debug, PartialEq, Eq)]
 pub enum Line<'a> {
     Code(&'a str),
+    Rem(&'a str),
     Inc(&'a str),
     Def(&'a str),
     Undef(&'a str),
@@ -45,8 +65,8 @@ pub enum Line<'a> {
 impl<'a> fmt::Display for Line<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Line::Code(line) => write!(f, "{}", line),
-            Line::Inc(path) => write!(f, "#include {}", path),
+            Line::Code(line) | Line::Rem(line) => write!(f, "{}", line),
+            Line::Inc(path) => write!(f, "#include \"{}\"", path),
             Line::Def(def) => write!(f, "#define {}", def),
             Line::Undef(def) => write!(f, "#undef {}", def),
             Line::If(exp) => write!(f, "#if {}", exp),
@@ -76,10 +96,7 @@ mod tests {
 
     use super::*;
 
-    const FILES: &[&str] = &[
-        //"benches/files/Native.g.cs",
-        "benches/files/shader.wgsl",
-    ];
+    const FILES: &[&str] = &["benches/files/Native.g.cs", "benches/files/shader.wgsl"];
 
     #[test]
     fn basic() {

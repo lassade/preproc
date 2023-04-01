@@ -186,7 +186,8 @@ impl<'a> Exp<'a> {
             // fast path for variable appending
             loop {
                 if offset >= data.len() {
-                    // accept the token
+                    // accept the token and clamp the offset
+                    offset = data.len();
                 } else {
                     // not very good vor short variable names
                     // ignore spaces
