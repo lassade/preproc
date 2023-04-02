@@ -529,8 +529,6 @@ impl Parser {
                     }
                 }
 
-                let ch = *self.ptr;
-
                 // account for "\r\n" line end format, this is important to avoid output extra `Line::Rem` events
                 if *self.ptr == b'\r' {
                     self.ptr = self.ptr.add(1);
