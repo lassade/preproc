@@ -54,6 +54,7 @@ struct Parser {
     ptr_end: *const u8,
     line_count: usize,
     line_ptr: *const u8,
+    fast_path: bool,
 }
 
 impl Parser {
@@ -63,6 +64,13 @@ impl Parser {
             ptr_end: null(),
             line_count: 0,
             line_ptr: null(),
+            fast_path: {
+                // fast path requires sse4.2 to
+                let cpuid = raw_cpuid::CpuId::new();
+                cpuid
+                    .get_feature_info()
+                    .map_or(false, |finfo| finfo.has_sse42())
+            },
         }
     }
 
@@ -288,66 +296,49 @@ impl Parser {
                 }
             }
 
-            // fast path for variable appending
-            loop {
-                if self.ptr >= self.ptr_end {
-                    // accept the token and limit the ptr
-                    self.ptr = self.ptr_end;
-                } else {
-                    // not very good vor short variable names
-                    // ignore spaces
-                    let break_mask = unsafe {
-                        let chunk = _mm_loadu_si128(self.ptr as *const __m128i); // 6 cycles
-                        _mm_movemask_epi8(_mm_or_si128(
-                            _mm_or_si128(
-                                _mm_or_si128(
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\n' as i8)),
-                                    _mm_or_si128(
-                                        _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b' ' as i8)),
-                                        _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\t' as i8)),
-                                    ),
-                                ),
-                                _mm_or_si128(
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'!' as i8)),
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'&' as i8)),
-                                ),
-                            ),
-                            _mm_or_si128(
-                                _mm_or_si128(
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'(' as i8)),
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b')' as i8)),
-                                ),
-                                _mm_or_si128(
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'|' as i8)),
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(comment_char)),
-                                ),
-                            ),
-                        )) // 15 + 3 cycles
-                    };
-                    if break_mask != 0 {
-                        // found something
-                        let break_offset = break_mask.trailing_zeros() as usize;
-                        if break_offset > 0 {
-                            // out of bounds check
-                            self.ptr = self.ptr.add(break_offset);
-                            if self.ptr > self.ptr_end {
-                                self.ptr = self.ptr_end;
-                            }
-                            // accept the token
+            // var appending
+            if self.fast_path {
+                // fast path many per many cmp requires sse4.2
+                while self.ptr < self.ptr_end {
+                    let chunk = _mm_loadu_si128(self.ptr as *const __m128i); // 6 cycles
+                    let break_offset = _mm_cmpestri::<0>(break_ch, 11, chunk, 16);
+                    if break_offset > 0 {
+                        // out of bounds check
+                        self.ptr = self.ptr.add(break_offset as usize);
+                        if self.ptr > self.ptr_end {
+                            self.ptr = self.ptr_end;
                         }
+                        // accept the token
+                        break;
                     } else {
                         self.ptr = self.ptr.add(16);
-                        continue;
                     }
                 }
-
-                // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
-                let token = unsafe { str_from_range(token_ptr, self.ptr) };
-                ops.push(Op::Var(token));
-
-                token_ptr = self.ptr; // accept the token
-                break;
+            } else {
+                // slower path per char many cmp
+                while self.ptr < self.ptr_end {
+                    let ch = *self.ptr;
+                    let break_mask = unsafe {
+                        _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch))
+                    };
+                    if break_mask != 0 {
+                        break;
+                    } else {
+                        self.ptr = self.ptr.add(1);
+                    }
+                }
             }
+
+            if self.ptr >= self.ptr_end {
+                // accept the token and limit the ptr
+                self.ptr = self.ptr_end;
+            }
+
+            // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
+            let token = unsafe { str_from_range(token_ptr, self.ptr) };
+            ops.push(Op::Var(token));
+
+            token_ptr = self.ptr; // accept the token
         }
 
         while let Some((token, offset)) = stack.pop() {
