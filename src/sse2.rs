@@ -135,7 +135,7 @@ impl Parser {
     }
 
     unsafe fn exp<'a, 'b>(&mut self, config: &'b Config) -> Exp<'a> {
-        // copied from exp.rs, but modified to support comments
+        // copied from exp.rs, but modified to support comments and newline
         //
         // uses the shunting yard algorithm
         // https://en.wikipedia.org/wiki/Shunting_yard_algorithm

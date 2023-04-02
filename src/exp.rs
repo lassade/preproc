@@ -3,12 +3,15 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-// todo: change to alloc
 use core::fmt;
 
 use beef::Cow;
-use hashbrown::HashMap;
+use hashbrown::HashSet;
 use smallvec::SmallVec;
+use smartstring::{Compact, SmartString};
+
+/// Type aliasing for a [`SmartString`] using the [`Compact`] mode of aggressive inlining
+pub type String = SmartString<Compact>;
 
 use crate::str_from_raw_parts;
 
@@ -21,10 +24,30 @@ pub enum Op<'a> {
     Not,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Ctx {
-    pub vars: HashMap<String, bool>,
+    pub vars: HashSet<String>,
     stack: Vec<bool>,
+}
+
+impl Default for Ctx {
+    fn default() -> Self {
+        let mut vars = HashSet::with_capacity(16);
+        vars.insert("true".into());
+        vars.insert("1".into());
+        Self {
+            vars,
+            stack: Vec::with_capacity(8),
+        }
+    }
+}
+
+impl Ctx {
+    pub fn clear(&mut self) {
+        self.vars.clear();
+        self.vars.insert("true".into());
+        self.vars.insert("1".into());
+    }
 }
 
 #[derive(Debug)]
@@ -281,9 +304,7 @@ impl<'a> Exp<'a> {
 
         for op in &self.ops {
             match op {
-                Op::Var(var) => ctx
-                    .stack
-                    .push(ctx.vars.get(*var).copied().unwrap_or_default()),
+                Op::Var(var) => ctx.stack.push(ctx.vars.contains(*var)),
                 Op::And => {
                     if ctx.stack.len() < 2 {
                         panic!("malformed exp");
