@@ -517,7 +517,14 @@ impl Parser {
                     }
                 }
 
-                // todo: account for "\r\n"
+                // account for "\r\n" line end format, this is important to avoid output extra `Line::Rem` events
+                if *self.ptr == b'\r' {
+                    self.ptr = self.ptr.add(1);
+                    if self.ptr >= self.ptr_end {
+                        break;
+                    }
+                }
+
                 if *self.ptr != b'\n' {
                     // remaning of the line if any will be treaded as a remaning of a line of code,
                     // unsupported directives also are threaded this way

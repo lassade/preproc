@@ -13,10 +13,8 @@ Code("    {")
 If(Exp { ops: [Var("UNITY_EDITOR"), Not, Var("UNITY_IOS"), Var("UNITY_SWITCH"), Or, And] })
 Code("        const string __DllName = \"__Internal\";")
 Else
-Rem("")
 Code("        const string __DllName = \"GUI1Native\";")
 Endif
-Rem("")
 Code("        ")
 Code("")
 Code("        [DllImport(__DllName, EntryPoint = \"rust_eh_personality\", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]")
