@@ -301,7 +301,10 @@ impl Parser {
                         _mm_movemask_epi8(_mm_or_si128(
                             _mm_or_si128(
                                 _mm_or_si128(
-                                    _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\n' as i8)),
+                                    _mm_or_si128(
+                                        _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\r' as i8)),
+                                        _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\n' as i8)),
+                                    ),
                                     _mm_or_si128(
                                         _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b' ' as i8)),
                                         _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\t' as i8)),
@@ -322,7 +325,7 @@ impl Parser {
                                     _mm_cmpeq_epi8(chunk, _mm_set1_epi8(comment_char)),
                                 ),
                             ),
-                        )) // 15 + 3 cycles
+                        )) // 19 + 3 cycles
                     };
                     if break_mask != 0 {
                         // found something
@@ -526,7 +529,16 @@ impl Parser {
                     }
                 }
 
-                // todo: account for "\r\n"
+                let ch = *self.ptr;
+
+                // account for "\r\n" line end format, this is important to avoid output extra `Line::Rem` events
+                if *self.ptr == b'\r' {
+                    self.ptr = self.ptr.add(1);
+                    if self.ptr >= self.ptr_end {
+                        break;
+                    }
+                }
+
                 if *self.ptr != b'\n' {
                     // remaning of the line if any will be treaded as a remaning of a line of code,
                     // unsupported directives also are threaded this way
