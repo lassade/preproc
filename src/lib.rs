@@ -319,6 +319,12 @@ impl PreProcessor {
             panic!("file \"{}\" not found", path);
         }
     }
+
+    pub fn process_to_writer(&mut self, path: &str, mut writer: impl std::io::Write) {
+        self.process(path, |text| {
+            write!(writer, "{}", text).expect("...");
+        });
+    }
 }
 
 #[cfg(test)]
