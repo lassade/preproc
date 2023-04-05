@@ -532,6 +532,8 @@ mod tests {
         }
 
         // missing operators
+        check("b && a !c ||");
+        check("b a && c ! ||");
         check("b && a !c");
         check("||a");
         check("&&a");

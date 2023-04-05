@@ -57,6 +57,7 @@ const unsafe fn str_from_range<'a>(ptr: *const u8, ptr_end: *const u8) -> &'a st
     str_from_raw_parts(ptr, ptr_end.offset_from(ptr) as usize)
 }
 
+// todo: a code block should reduce the ammount of memory to store it all
 #[derive(Debug, PartialEq, Eq)]
 pub enum Line<'a> {
     Code(&'a str),
