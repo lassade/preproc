@@ -8,7 +8,6 @@ use core::fmt;
 use hashbrown::{HashMap, HashSet};
 use smartstring::{Compact, SmartString};
 
-mod chars;
 pub mod exp;
 mod sse2;
 
