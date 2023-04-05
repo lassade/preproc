@@ -360,6 +360,8 @@ impl Parser {
             ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
         }
 
+        // todo: check if the expression is valid or not
+
         Exp { ops }
     }
 

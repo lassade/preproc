@@ -8,6 +8,7 @@ Simple and configurable SIMD pre-processor, with a throughput of up to 3 GiB/s
 - SSE2 required, no NEON support for the time been
 - Whitespaces are considered to be `' ' (0x20)` and `'\t' (0x09)`
 - Multiline comments aren't supported, but they work in some situations
+- Unary operators can be placed in on left e.g. `!a == a!` and `!(a && b) == (a && b)!`
 
 # Samples
 

@@ -22,6 +22,7 @@ pub enum Op<'a> {
     And,
     Or,
     Not,
+    // todo: Xor
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -277,6 +278,8 @@ impl<'a> Exp<'a> {
             ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
         }
 
+        // todo: check if the expression is valid or not
+
         Ok(Self { ops })
     }
 
@@ -495,6 +498,11 @@ mod tests {
         assert_eq!(to_string(" !\ta    "), "!(a)");
         assert_eq!(to_string(" !\ta  \t "), "!(a)");
 
+        // unary operators can be applyied in both left and right
+        assert_eq!(to_string("b && a !"), "(b && !(a))");
+        assert_eq!(to_string("(b && a)!"), "!((b && a))");
+        assert_eq!(to_string("b || a && c !"), "((b || a) && !(c))");
+
         assert_eq!(to_string("b||a"), "(b || a)");
         assert_eq!(
             to_string("some_big$string@||!other_value023"),
@@ -506,20 +514,25 @@ mod tests {
     fn malformed() {
         fn check(exp: &str) {
             match Exp::from_str(exp) {
-                Ok(val) => panic!(
-                    "malformed expression `{}` was parsed as: `{}` {:?}",
-                    exp, &val, &val.ops
-                ),
+                Ok(val) => {
+                    if val.is_valid() {
+                        panic!(
+                            "expression `{}` was parsed as: `{}` {:?}",
+                            exp, &val, &val.ops
+                        );
+                    } else {
+                        panic!(
+                            "expression `{}` was parsed as an invalid `Exp`: {:?}",
+                            exp, &val.ops
+                        );
+                    }
+                }
                 Err(_) => {}
             }
         }
 
-        // unary check
-        check("b && a !");
-        check("b && a !c");
-        check("b || a && c !");
-
         // missing operators
+        check("b && a !c");
         check("||a");
         check("&&a");
         check("b || a &&");
