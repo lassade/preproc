@@ -347,9 +347,45 @@ impl PreProcessor {
         });
     }
 
-    // pub fn find_defines_of(&mut self, path: &str, defines: &mut Vec<SmartString<Compact>>) {
-    //     todo!()
-    // }
+    fn find_defines_of_file(&mut self, file: &File, defines: &mut HashSet<SmartString<Compact>>) {
+        for line in file.lines.iter() {
+            match line {
+                Line::Inc(inc) => {
+                    // load and recursively add theses lines to the current one
+                    if let Some(inc_file) = self.preload(inc) {
+                        self.find_defines_of_file(inc_file.as_ref(), defines);
+                    }
+                }
+                &Line::Def(def) => {
+                    defines.insert(def.into());
+                }
+                Line::If(exp) | Line::Elif(exp) => {
+                    for op in &exp.ops {
+                        match op {
+                            &exp::Op::Var(def) => {
+                                defines.insert(def.into());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn find_defines_of(&mut self, path: &str, defines: &mut HashSet<SmartString<Compact>>) {
+        if let Some(file) = self.preload(path) {
+            self.find_defines_of_file(file.as_ref(), defines);
+            // remove constant defines
+            defines.remove("0");
+            defines.remove("1");
+            defines.remove("true");
+            defines.remove("false");
+        } else {
+            panic!("file \"{}\" not found", path);
+        }
+    }
 }
 
 #[cfg(test)]
