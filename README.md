@@ -4,11 +4,13 @@ Simple and configurable SIMD pre-processor, with a throughput of up to 3 GiB/s
 
 # Quirks and Other Notes
 
-- Supports only UTF-8
+- Booleans only
+- UTF-8 only
 - SSE2 required, no NEON support for the time been
 - Whitespaces are considered to be `' ' (0x20)` and `'\t' (0x09)`
 - Multiline comments aren't supported, (they work in some situations, but is best to avoid them)
 - Unary operators can be placed on left e.g. `!a == a!` and `!(a && b) == (a && b)!`
+- Expressions are some what loosely parsed e.g. `b && a c! ||` is parsed as ` (b || (a && !(c)))`
 
 # Samples
 

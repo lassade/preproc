@@ -88,7 +88,7 @@ impl<'a> fmt::Display for Line<'a> {
 
 pub struct File {
     _data: String,
-    // lines self referece str inside `_data` that's why the lifelime is static
+    // each line self referece str slices of `_data` that's why the lifelime is 'static
     lines: Vec<Line<'static>>,
 }
 
@@ -97,7 +97,7 @@ impl File {
         let mut lines = vec![];
 
         // safety: `data` will live as long as each line because they are kept
-        // inside the same read-only struct
+        // inside the same struct inaccessible to the end user
         let borrow = unsafe { &*(&data as *const String) };
         sse2::parse_file(&borrow, config, |line| lines.push(line));
 
@@ -106,6 +106,7 @@ impl File {
 }
 
 pub trait FileLoader {
+    // todo: return a parsed File with the proper file path
     fn load(&self, path: &str) -> Option<String>;
 }
 
@@ -217,10 +218,12 @@ impl PreProcessor {
         }
     }
 
-    fn process_file(&mut self, file: &File, mut f: impl FnMut(&str)) {
+    fn process_file(&mut self, file_path: &str, file: &File, f: &mut impl FnMut(&str)) {
         // does the acctual processing recursively
 
-        for line in &file.lines {
+        let stack_depth = self.state_stack.len();
+
+        for (line_count, line) in file.lines.iter().enumerate() {
             match line {
                 Line::Code(line) | Line::Rem(line) => {
                     // default behaviour is to remove lines
@@ -237,9 +240,14 @@ impl PreProcessor {
                 Line::Inc(inc) => {
                     // load and recursively add theses lines to the current one
                     if let Some(inc_file) = self.preload(inc) {
-                        self.process_file(inc_file.as_ref(), &mut f);
+                        self.process_file(inc, inc_file.as_ref(), f);
                     } else {
-                        panic!("couldn't find include file \"{}\"", inc);
+                        panic!(
+                            "couldn't find include file \"{}\" at {}:{}",
+                            inc,
+                            file_path,
+                            line_count + 1
+                        );
                     }
                 }
                 &Line::Def(def) => {
@@ -258,46 +266,59 @@ impl PreProcessor {
                     self.state.value_flipped_by_else_block = false;
                 }
                 Line::Elif(exp) => {
-                    let state = self
-                        .state_stack
-                        .last_mut()
-                        .expect("`elif` doesn't have a maching `if`");
-
-                    if state.value_flipped_by_else_block {
-                        panic!("`elif` after `else`");
+                    if self.state_stack.len() == 0 {
+                        panic!(
+                            "`elif` doesn't have a maching `if` at {}:{}",
+                            file_path,
+                            line_count + 1
+                        );
                     }
 
-                    if !state.value {
-                        // state still false, try out to see if
-                        state.value = exp.eval(&mut self.ctx);
+                    if self.state.value_flipped_by_else_block {
+                        panic!("`elif` after `else` at {}:{}", file_path, line_count + 1);
+                    }
+
+                    if !self.state.value {
+                        // state still false, evel expression to see if will print the next lines of code
+                        self.state.value = exp.eval(&mut self.ctx);
                     }
                 }
                 Line::Else => {
-                    let state = self
-                        .state_stack
-                        .last_mut()
-                        .expect("`else` doesn't have a maching `if`");
-
-                    if state.value_flipped_by_else_block {
-                        panic!("`else` after `else`");
+                    if self.state_stack.len() == 0 {
+                        panic!(
+                            "`else` doesn't have a maching `if` at {}:{}",
+                            file_path,
+                            line_count + 1
+                        );
                     }
 
-                    state.value = !state.value;
-                    state.value_flipped_by_else_block = true;
+                    if self.state.value_flipped_by_else_block {
+                        panic!("`else` after `else` at {}:{}", file_path, line_count + 1);
+                    }
+
+                    self.state.value = !self.state.value;
+                    self.state.value_flipped_by_else_block = true;
                 }
                 Line::Endif => {
-                    self.state = self
-                        .state_stack
-                        .pop()
-                        .expect("`endif` doesn't have a maching `if`");
+                    if let Some(prev_state) = self.state_stack.pop() {
+                        self.state = prev_state;
+                    } else {
+                        panic!(
+                            "`endif` doesn't have a maching `if` at {}:{}",
+                            file_path,
+                            line_count + 1
+                        );
+                    }
                 }
             }
         }
 
-        assert!(!self.state_stack.is_empty(), "`if` block is open");
+        if stack_depth != self.state_stack.len() {
+            panic!("some `if` block is open in file {}", file_path);
+        }
     }
 
-    pub fn process(&mut self, path: &str, f: impl FnMut(&str)) {
+    pub fn process(&mut self, path: &str, mut f: impl FnMut(&str)) {
         if let Some(file) = self.preload(path) {
             // clear state
             self.ctx.clear();
@@ -314,7 +335,7 @@ impl PreProcessor {
             }
 
             // begin processing files
-            self.process_file(file.as_ref(), f);
+            self.process_file(path, file.as_ref(), &mut f);
         } else {
             panic!("file \"{}\" not found", path);
         }
@@ -322,9 +343,13 @@ impl PreProcessor {
 
     pub fn process_to_writer(&mut self, path: &str, mut writer: impl std::io::Write) {
         self.process(path, |text| {
-            write!(writer, "{}", text).expect("...");
+            write!(writer, "{}", text).expect("failed to write line");
         });
     }
+
+    // pub fn find_defines_of(&mut self, path: &str, defines: &mut Vec<SmartString<Compact>>) {
+    //     todo!()
+    // }
 }
 
 #[cfg(test)]
@@ -333,10 +358,10 @@ mod tests {
 
     use super::*;
 
-    const FILES: &[&str] = &["benches/files/Native.g.cs", "benches/files/shader.wgsl"];
-
     #[test]
     fn basic() {
+        const FILES: &[&str] = &["benches/files/Native.g.cs", "benches/files/shader.wgsl"];
+
         let config = Config::default();
 
         for path in FILES {
@@ -350,5 +375,24 @@ mod tests {
                 writeln!(output, "{:?}", &line).unwrap();
             });
         }
+    }
+
+    #[test]
+    fn bevy() {
+        let mut file_loader = DefaultFileLoader::default();
+        file_loader
+            .search_paths
+            .push("benches/files/bevy".to_string());
+        let mut pre_processor = PreProcessor {
+            file_loader: Box::new(file_loader),
+            ..Default::default()
+        };
+
+        let mut output = std::fs::File::create("benches/files/bevy_pbr.wgsl")
+            .expect("failed to create output file");
+
+        pre_processor.process_to_writer("pbr/pbr.wgsl", &mut output);
+
+        // todo: list all the defines with `find_defines_of`
     }
 }
