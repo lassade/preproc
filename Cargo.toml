@@ -1,6 +1,6 @@
 [package]
 name = "preproc"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "a sane pre-processor for shaders and any other language"
 license = "MIT OR Apache-2.0"
