@@ -183,9 +183,9 @@ pub struct PreProcessor {
     pub files: HashMap<String, Rc<File>>,
     pub defines: HashSet<SmartString<Compact>>,
     ctx: Ctx,
-    line_count: usize,
     state: State,
     state_stack: Vec<State>,
+    outputted_line_count: usize,
 }
 
 impl Default for PreProcessor {
@@ -194,14 +194,14 @@ impl Default for PreProcessor {
             config: Config::default(),
             file_loader: Box::new(DefaultFileLoader::default()),
             files: HashMap::default(),
-            defines: HashSet::default(),
+            defines: HashSet::with_capacity(32),
             ctx: Ctx::default(),
-            line_count: 1,
             state: State {
                 value: true,
                 value_flipped_by_else_block: true,
             },
             state_stack: Vec::with_capacity(4),
+            outputted_line_count: 1,
         }
     }
 }
@@ -228,13 +228,8 @@ impl PreProcessor {
                 Line::Code(line) | Line::Rem(line) => {
                     // default behaviour is to remove lines
                     if self.state.value {
-                        if self.line_count > 1 {
-                            (f)("\n");
-                        }
-
                         (f)(line);
-
-                        self.line_count += 1;
+                        self.outputted_line_count += 1;
                     }
                 }
                 Line::Inc(inc) => {
@@ -322,7 +317,7 @@ impl PreProcessor {
         if let Some(file) = self.preload(path) {
             // clear state
             self.ctx.clear();
-            self.line_count = 0;
+            self.outputted_line_count = 0;
             self.state = State {
                 value: true,
                 value_flipped_by_else_block: true,
@@ -341,9 +336,16 @@ impl PreProcessor {
         }
     }
 
+    pub fn process_to_str(&mut self, path: &str, string: &mut String) {
+        self.process(path, |text| {
+            string.push_str(text);
+            string.push_str("\n");
+        });
+    }
+
     pub fn process_to_writer(&mut self, path: &str, mut writer: impl std::io::Write) {
         self.process(path, |text| {
-            write!(writer, "{}", text).expect("failed to write line");
+            writeln!(writer, "{}", text).expect("failed to write line");
         });
     }
 
@@ -390,45 +392,102 @@ impl PreProcessor {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
     use super::*;
 
     #[test]
     fn basic() {
-        const FILES: &[&str] = &["benches/files/Native.g.cs", "benches/files/shader.wgsl"];
+        const FILES: &[(&str, usize)] = &[
+            ("benches/files/Native.g.cs", 177),
+            ("benches/files/shader.wgsl", 636),
+        ];
 
         let config = Config::default();
 
-        for path in FILES {
+        for &(path, line_count) in FILES {
             let input = std::fs::read_to_string(path).expect("file not found");
-            //File::from_str(&input, &config);
+            let file = File::parse(input, &config);
+            assert_eq!(file.lines.len(), line_count);
+        }
+    }
 
-            // used to create the source of truth
-            let mut output =
-                std::fs::File::create(format!("{}.t", path)).expect("failed to create output file");
-            sse2::parse_file(&input, &config, |line| {
-                writeln!(output, "{:?}", &line).unwrap();
-            });
+    #[test]
+    fn defines_of_file() {
+        let mut pre_processor = PreProcessor {
+            file_loader: Box::new({
+                let mut file_loader = DefaultFileLoader::default();
+                file_loader.search_paths.push("benches/files".into());
+                file_loader
+            }),
+            ..Default::default()
+        };
+
+        let mut defines = HashSet::with_capacity(32);
+        pre_processor.find_defines_of("main.c", &mut defines);
+
+        for def in ["COMMON_HEADER", "OTHER_DEFINE"] {
+            assert!(
+                defines.contains(def),
+                "define `{}` not found in {:?}",
+                def,
+                &defines
+            );
         }
     }
 
     #[test]
     fn bevy() {
-        let mut file_loader = DefaultFileLoader::default();
-        file_loader
-            .search_paths
-            .push("benches/files/bevy".to_string());
         let mut pre_processor = PreProcessor {
-            file_loader: Box::new(file_loader),
+            file_loader: Box::new({
+                let mut file_loader = DefaultFileLoader::default();
+                file_loader.search_paths.push("benches/files/bevy".into());
+                file_loader
+            }),
             ..Default::default()
         };
 
-        let mut output = std::fs::File::create("benches/files/bevy_pbr.wgsl")
-            .expect("failed to create output file");
+        let mut defines = HashSet::with_capacity(32);
+        pre_processor.find_defines_of("pbr/pbr.wgsl", &mut defines);
 
-        pre_processor.process_to_writer("pbr/pbr.wgsl", &mut output);
+        for def in [
+            "NO_ARRAY_TEXTURES_SUPPORT",
+            "DIRECTIONAL_LIGHT_SHADOW_MAP_DEBUG_CASCADES",
+            "PREMULTIPLY_ALPHA",
+            "MOTION_VECTOR_PREPASS",
+            "LOAD_PREPASS_NORMALS",
+            "DEPTH_PREPASS",
+            "TONEMAP_METHOD_REINHARD_LUMINANCE",
+            "TONEMAP_METHOD_NONE",
+            "ENVIRONMENT_MAP",
+            "VERTEX_COLORS",
+            "TONEMAP_METHOD_REINHARD",
+            "TONEMAP_METHOD_SOMEWHAT_BORING_DISPLAY_TRANSFORM",
+            "STANDARDMATERIAL_NORMAL_MAP",
+            "BLEND_MULTIPLY",
+            "NORMAL_PREPASS",
+            "VERTEX_TANGENTS",
+            "VERTEX_UVS",
+            "TONEMAP_METHOD_TONY_MC_MAPFACE",
+            "SKINNED",
+            "CLUSTERED_FORWARD_DEBUG_Z_SLICES",
+            "CLUSTERED_FORWARD_DEBUG_CLUSTER_LIGHT_COMPLEXITY",
+            "SIXTEEN_BYTE_ALIGNMENT",
+            "TONEMAP_METHOD_AGX",
+            "TONEMAP_METHOD_ACES_FITTED",
+            "TONEMAP_IN_SHADER",
+            "CLUSTERED_FORWARD_DEBUG_CLUSTER_COHERENCY",
+            "LIGHTS_USE_STORAGE",
+            "PREPASS_FRAGMENT",
+            "MULTISAMPLED",
+            "DEBAND_DITHER",
+            "BLEND_PREMULTIPLIED_ALPHA",
+            "TONEMAP_METHOD_BLENDER_FILMIC",
+        ] {
+            assert!(defines.contains(def), "define `{}` not found", def,);
+        }
 
-        // todo: list all the defines with `find_defines_of`
+        let mut output = String::with_capacity(32 * 1024 * 1024);
+        pre_processor.process_to_str("pbr/pbr.wgsl", &mut output);
+
+        assert_eq!(pre_processor.outputted_line_count, 1219);
     }
 }

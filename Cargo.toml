@@ -13,9 +13,8 @@ hashbrown = "0.13.2"
 beef = "0.5.2"
 smallvec = "1.10.0"
 smartstring = { version = "1.0.1", default-features = false }
-
 simdutf8 = "0.1.4"
-codespan-reporting = "0.11.1"
+#codespan-reporting = "0.11.1"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", default-features = false, features = ["rayon", "cargo_bench_support"] }

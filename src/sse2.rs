@@ -1,5 +1,4 @@
-#![allow(unused)]
-
+use alloc::vec::Vec;
 #[cfg(target_arch = "x86")]
 use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
@@ -99,15 +98,6 @@ impl Parser {
     unsafe fn find(&mut self, ch: u8) -> bool {
         self.mask_and_find(|chunk| {
             _mm_movemask_epi8(_mm_cmpeq_epi8(chunk, _mm_set1_epi8(ch as i8))) // 4 cycles
-        })
-    }
-
-    unsafe fn find_enter_or(&mut self, ch: u8) -> bool {
-        self.mask_and_find(|chunk| {
-            !_mm_movemask_epi8(_mm_or_si128(
-                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\n' as i8)), // 0x0A (10)
-                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(ch as i8)),
-            )) // 8 cycles
         })
     }
 
@@ -353,7 +343,7 @@ impl Parser {
             }
         }
 
-        while let Some((token, offset)) = stack.pop() {
+        while let Some((token, _)) = stack.pop() {
             if token == Token::LParen {
                 panic!("unmached `(` {}:{}", self.line_count, self.char_pos());
             }
@@ -576,7 +566,7 @@ impl Parser {
     }
 }
 
-pub fn parse_file<'a>(input: &'a str, config: &Config, mut f: impl FnMut(Line<'a>)) {
+pub fn parse_file<'a>(input: &'a str, config: &Config, f: impl FnMut(Line<'a>)) {
     let mut parser = Parser::new();
     unsafe { parser.parse(input, config, f) };
 }
@@ -591,7 +581,7 @@ mod tests {
         let mut text = String::default();
 
         for (i, line) in lines.iter().enumerate() {
-            write!(text, "{}", line);
+            write!(text, "{}", line).unwrap();
             if i < lines.len() - 1 {
                 text.push('\n');
             }
@@ -640,20 +630,5 @@ mod tests {
             Line::Endif,
             Line::Code("}"),
         ]);
-    }
-
-    #[test]
-    fn degenerated() {
-        // fn func() -> f32 {
-        // #define // blank define
-        //     /* some comment
-        //     #if SHADOWS */ // should be readed as a line of code
-        //     #if NOT_SHADOWS // line rem
-        //     return 0.0;"),
-        //     #else
-        //     return 1.0;"),
-        //     #endif
-        // }
-        todo!();
     }
 }
