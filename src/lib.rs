@@ -207,6 +207,13 @@ impl Default for PreProcessor {
 }
 
 impl PreProcessor {
+    pub fn with_loader(file_loader: impl FileLoader + 'static) -> Self {
+        Self {
+            file_loader: Box::new(file_loader),
+            ..Default::default()
+        }
+    }
+
     pub fn preload(&mut self, path: &str) -> Option<Rc<File>> {
         match self.files.entry(path.into()) {
             hashbrown::hash_map::Entry::Occupied(ref entry) => Some(entry.get().clone()),

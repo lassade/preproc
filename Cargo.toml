@@ -20,9 +20,5 @@ simdutf8 = "0.1.4"
 criterion = { version = "0.4.0", default-features = false, features = ["rayon", "cargo_bench_support"] }
 
 [[bench]]
-name = "exp"
-harness = false
-
-[[bench]]
-name = "parser"
+name = "bench"
 harness = false
