@@ -5,10 +5,11 @@ use core::arch::x86::*;
 use core::arch::x86_64::*;
 use core::ptr::null;
 
+use beef::Cow;
 use smallvec::SmallVec;
 
 use crate::{
-    exp::{Exp, Op},
+    exp::{self, Exp, Op},
     str_from_range, str_from_raw_parts, Config, Line,
 };
 
@@ -569,6 +570,223 @@ impl Parser {
 pub fn parse_file<'a>(input: &'a str, config: &Config, f: impl FnMut(Line<'a>)) {
     let mut parser = Parser::new();
     unsafe { parser.parse(input, config, f) };
+}
+
+pub fn parse_exp<'a>(exp: &'a str) -> Result<Exp<'a>, exp::Error> {
+    // uses the shunting yard algorithm
+    // https://en.wikipedia.org/wiki/Shunting_yard_algorithm
+
+    #[derive(PartialOrd, Ord, PartialEq, Eq, Clone, Copy)]
+    enum Token {
+        And = 0,
+        Or = 1,
+        Not = 2,
+        Noop,
+        LParen,
+    }
+
+    // translate a [`Token`] to a `Op` and precedence
+    const OPERATORS: &[Op<'static>] = &[Op::And, Op::Or, Op::Not];
+    const PRECEDENCE: &[usize] = &[0, 0, 1];
+
+    let mut stack: SmallVec<[(Token, usize); 16]> = SmallVec::new();
+    let mut ops = Vec::with_capacity(16);
+
+    let data = exp.as_bytes();
+    let mut offset = 0;
+    let mut token_offset = 0;
+
+    let break_ch = unsafe {
+        _mm_set_epi8(
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            b'\0' as i8,
+            b'\r' as i8,
+            b'\n' as i8,
+            b'\t' as i8, // 6
+            b' ' as i8,  // 5
+            b'!' as i8,  // 4
+            b'&' as i8,  // 3
+            b'(' as i8,  // 2
+            b')' as i8,  // 1
+            b'|' as i8,  // 0
+        )
+    };
+
+    loop {
+        if offset >= data.len() {
+            break;
+        }
+
+        let ch = unsafe { *data.get_unchecked(offset) };
+        offset += 1;
+
+        // doesn't need to check for utf8 continuation bits, because they will be handled in the variable section
+
+        let break_mask =
+            unsafe { _mm_movemask_epi8(_mm_cmpeq_epi8(_mm_set1_epi8(ch as _), break_ch)) };
+
+        if break_mask != 0 {
+            if break_mask & 0b1111_1111_1110_0000 != 0 {
+                // accept and skip
+                token_offset = offset;
+                continue;
+            }
+
+            if break_mask & 0b0000_0100 != 0 {
+                token_offset = offset; // accept the token
+                stack.push((Token::LParen, offset));
+                continue;
+            }
+
+            if break_mask & 0b0000_0010 != 0 {
+                token_offset = offset; // accept the token
+                loop {
+                    if let Some((token, _)) = stack.pop() {
+                        if token != Token::LParen {
+                            ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
+                        } else {
+                            break;
+                        }
+                    } else {
+                        return Err(exp::Error {
+                            offset: offset - 1,
+                            len: 1,
+                            message: Cow::borrowed("unmached `)`"),
+                        });
+                    }
+                }
+                continue;
+            }
+
+            let op0;
+            if break_mask & 0b0000_1000 != 0 {
+                // and
+                if offset >= data.len() || unsafe { *data.get_unchecked(offset) } != b'&' {
+                    return Err(exp::Error {
+                        offset: offset - 1,
+                        len: 1,
+                        message: Cow::borrowed("expecting `&&`"),
+                    });
+                }
+                offset += 1;
+                op0 = Token::And;
+            } else if break_mask & 0b0000_0001 != 0 {
+                // or
+                if offset >= data.len() || unsafe { *data.get_unchecked(offset) } != b'|' {
+                    return Err(exp::Error {
+                        offset: offset - 1,
+                        len: 1,
+                        message: Cow::borrowed("expecting `||`"),
+                    });
+                }
+                offset += 1;
+                op0 = Token::Or;
+            } else if break_mask & 0b0001_0000 != 0 {
+                // not
+                op0 = Token::Not;
+            } else {
+                op0 = Token::Noop;
+            }
+            if op0 != Token::Noop {
+                token_offset = offset; // accept the token
+                loop {
+                    let pre0 = unsafe { *PRECEDENCE.get_unchecked(op0 as usize) };
+                    if let Some(&(op1, _)) = stack.last() {
+                        if op1 == Token::LParen {
+                            break;
+                        }
+                        let pre1 = unsafe { *PRECEDENCE.get_unchecked(op1 as usize) };
+                        if pre0 <= pre1 {
+                            ops.push(unsafe { *OPERATORS.get_unchecked(op1 as usize) });
+                            stack.pop();
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                stack.push((op0, offset));
+                continue;
+            }
+        }
+
+        // fast path for variable appending
+        loop {
+            if offset >= data.len() {
+                // accept the token and clamp the offset
+                offset = data.len();
+            } else {
+                // not very good vor short variable names
+                // ignore spaces
+                let break_mask = unsafe {
+                    let chunk =
+                        _mm_loadu_si128(data.get_unchecked(offset) as *const u8 as *const __m128i); // 6 cycles
+                    _mm_movemask_epi8(_mm_or_si128(
+                        _mm_or_si128(
+                            _mm_or_si128(
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b' ' as i8)),
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'\t' as i8)),
+                            ),
+                            _mm_or_si128(
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'!' as i8)),
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'&' as i8)),
+                            ),
+                        ),
+                        _mm_or_si128(
+                            _mm_or_si128(
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'(' as i8)),
+                                _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b')' as i8)),
+                            ),
+                            _mm_cmpeq_epi8(chunk, _mm_set1_epi8(b'|' as i8)),
+                        ),
+                    )) // 13 + 3 cycles
+                };
+                if break_mask != 0 {
+                    // found something
+                    let break_offset = break_mask.trailing_zeros() as usize;
+                    if break_offset > 0 {
+                        // out of bounds check
+                        offset += break_offset;
+                        if offset > data.len() {
+                            offset = data.len();
+                        }
+                        // accept the token
+                    }
+                } else {
+                    offset += 16;
+                    continue;
+                }
+            }
+
+            // safety: str slice respect the utf8 chars continuation bytes, because it will only split in ascii chars
+            let token = unsafe {
+                str_from_raw_parts(data.get_unchecked(token_offset), offset - token_offset)
+            };
+            ops.push(Op::Var(token));
+
+            token_offset = offset; // accept the token
+            break;
+        }
+    }
+
+    while let Some((token, offset)) = stack.pop() {
+        if token == Token::LParen {
+            return Err(exp::Error {
+                offset: offset - 1,
+                len: 1,
+                message: Cow::borrowed("unmached `(`"),
+            });
+        }
+        ops.push(unsafe { *OPERATORS.get_unchecked(token as usize) });
+    }
+
+    // todo: check if the expression is valid or not
+
+    Ok(Exp { ops })
 }
 
 #[cfg(test)]

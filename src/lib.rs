@@ -9,12 +9,13 @@ use hashbrown::{HashMap, HashSet};
 use smartstring::{Compact, SmartString};
 
 pub mod exp;
-mod sse2;
-
 use exp::{Ctx, Exp};
 
-// exports
-pub use sse2::parse_file;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod sse2;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub use sse2::{parse_exp, parse_file};
 
 pub struct Config {
     /// Special ASCII character used to define the start of an directive, default is `b'#'`
